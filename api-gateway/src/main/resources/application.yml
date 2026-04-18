@@ -1,0 +1,104 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "http://localhost:3001"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+
+      routes:
+        # ─── IAM Service ───
+        - id: iam-service
+          uri: lb://iam-service
+          predicates:
+            - Path=/api/auth/**, /api/admin/auth/**, /api/users/**, /api/admin/profile/**
+          filters:
+            - StripPrefix=0
+
+        # ─── Tour Catalog Service ───
+        - id: tour-catalog-service
+          uri: lb://tour-catalog-service
+          predicates:
+            - Path=/api/tours/**, /api/admin/tours/**, /api/locations/**, /api/admin/locations/**, /api/departures/**, /api/reviews/**, /api/favorite-tours/**, /api/branch-contacts/**, /api/policy-templates/**, /api/tour-media/**
+          filters:
+            - StripPrefix=0
+
+        # ─── Booking Service ───
+        - id: booking-service
+          uri: lb://booking-service
+          predicates:
+            - Path=/api/bookings/**, /api/coupons/**
+          filters:
+            - StripPrefix=0
+
+        # ─── Payment Service ───
+        - id: payment-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/payment/**
+          filters:
+            - StripPrefix=0
+
+        # ─── Forum Service ───
+        - id: forum-service
+          uri: lb://forum-service
+          predicates:
+            - Path=/api/posts/**, /api/tags/**, /api/categories/**, /api/bookmarks/**, /api/followers/**
+          filters:
+            - StripPrefix=0
+
+        # ─── Notification Service ───
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/notifications/**
+          filters:
+            - StripPrefix=0
+
+        # ─── Analytics Service ───
+        - id: analytics-service
+          uri: lb://analytics-service
+          predicates:
+            - Path=/api/dashboard/**, /api/chatbot/**
+          filters:
+            - StripPrefix=0
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
+
+jwt:
+  secret: ${JWT_SECRET:59379ea8-777d-49e1-ac8e-03420874f6a3}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway

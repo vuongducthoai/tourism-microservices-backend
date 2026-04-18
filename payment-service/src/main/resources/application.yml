@@ -1,0 +1,76 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: payment-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/payment_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:tourism}
+    password: ${RABBITMQ_PASSWORD:tourism123}
+
+# ─── VNPay ───
+vnpay:
+  tmn-code: ${VNPAY_TMN_CODE:2Z2285VA}
+  hash-secret: ${VNPAY_HASH_SECRET:UUN1JEF3JCWQIRCMN76Q34RUQLRI4Q1J}
+  api-url: https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
+  return-url: ${VNPAY_RETURN_URL:http://localhost:8080/api/payment/vnpay-callback}
+  version: "2.1.0"
+  command: pay
+  order-type: other
+
+# ─── PayOS ───
+payos:
+  client:
+    id: ${PAYOS_CLIENT_ID:962cb7bd-af11-4087-9a97-421dcb15d5e9}
+  api:
+    key: ${PAYOS_API_KEY:2c6a084b-148f-4843-95f8-2e2728035177}
+  checksum:
+    key: ${PAYOS_CHECKSUM_KEY:ce10a03ef7a6a2c8e140961232f559de10c2d80d7d8741b0a4e0be0b884d1516}
+  return:
+    url: ${PAYOS_RETURN_URL:http://localhost:3000/payment-success}
+  cancel:
+    url: ${PAYOS_CANCEL_URL:http://localhost:3000/payment-cancel}
+  webhook:
+    url: ${PAYOS_WEBHOOK_URL:}
+
+# ─── SePay ───
+sepay:
+  api-url: https://my.sepay.vn/userapi
+  token: ${SEPAY_TOKEN:your-sepay-token}
+  account-number: ${SEPAY_ACCOUNT_NUMBER:10002897094}
+  account-name: ${SEPAY_ACCOUNT_NAME:TRAN ANH THU}
+  bank-code: ${SEPAY_BANK_CODE:BIDV}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
+  instance:
+    prefer-ip-address: true
+
+feign:
+  client:
+    config:
+      booking-service:
+        connectTimeout: 5000
+        readTimeout: 5000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
