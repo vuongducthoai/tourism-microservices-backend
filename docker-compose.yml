@@ -26,7 +26,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,7 +42,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -62,7 +62,7 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      test: [ "CMD", "rabbitmq-diagnostics", "check_running" ]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -82,7 +82,7 @@ services:
     environment:
       - EUREKA_HOST=service-discovery
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8761/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8761/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -104,7 +104,7 @@ services:
       service-discovery:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8888/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -129,7 +129,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -164,7 +164,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8081/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -197,7 +197,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8082/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -230,7 +230,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8083/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -260,7 +260,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8084/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8084/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -293,7 +293,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8085/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8085/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -326,7 +326,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8086/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8086/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -356,7 +356,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8087/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8087/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
