@@ -20,10 +20,11 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
-    timeout: 10s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 10s
   cache:
     type: redis
   rabbitmq:
@@ -44,7 +45,6 @@ eureka:
   instance:
     prefer-ip-address: true
 
-# Feign client to IAM Service (get user info for reviews)
 feign:
   client:
     config:

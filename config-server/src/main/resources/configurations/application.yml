@@ -1,0 +1,7 @@
+# Default shared configuration for all services
+# Each service can override these values in their own application.yml
+
+logging:
+  level:
+    root: INFO
+    com.tourism: DEBUG

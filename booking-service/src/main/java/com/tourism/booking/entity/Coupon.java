@@ -51,11 +51,11 @@ public class Coupon extends BaseEntity {
     @Column(name = "departure_id")
     private Integer departureId;
 
-    public boolean isValid() {
-        LocalDateTime now = LocalDateTime.now();
-        return !Boolean.TRUE.equals(getIsDeleted()) &&
-                (startDate == null || now.isAfter(startDate)) &&
-                (endDate == null || now.isBefore(endDate)) &&
-                (usageLimit == null || usageCount < usageLimit);
-    }
+//    public boolean isValid() {
+//        LocalDateTime now = LocalDateTime.now();
+//        return !Boolean.TRUE.equals(getIsDeleted()) &&
+//                (startDate == null || now.isAfter(startDate)) &&
+//                (endDate == null || now.isBefore(endDate)) &&
+//                (usageLimit == null || usageCount < usageLimit);
+//    }
 }

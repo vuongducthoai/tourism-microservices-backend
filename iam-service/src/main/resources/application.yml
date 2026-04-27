@@ -59,10 +59,11 @@ spring:
             user-name-attribute: sub
 
   # ─── Redis ───
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
-    timeout: 10s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 10s
 
   # ─── RabbitMQ ───
   rabbitmq:

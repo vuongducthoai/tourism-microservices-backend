@@ -32,6 +32,6 @@ public class Notification extends BaseEntity {
     private String message;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "JSON")
+    @Column(columnDefinition = "jsonb")
     private JsonNode metadata;
 }
