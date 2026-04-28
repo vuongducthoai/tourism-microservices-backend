@@ -34,7 +34,7 @@ public class Payment extends BaseEntity {
     @Column(name = "account_number")
     private String accountNumber;
 
-    @Column(name = "bank_name")
+    @Column(name = "bank")
     private String bank;
 
     @Enumerated(EnumType.STRING)

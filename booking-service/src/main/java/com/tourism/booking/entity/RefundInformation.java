@@ -16,7 +16,8 @@ public class RefundInformation extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer refundID;
 
-    private String bankName;
+    @Column(name = "bank")
+    private String bank;
     private String accountNumber;
     private String accountName;
     private BigDecimal refundAmount;

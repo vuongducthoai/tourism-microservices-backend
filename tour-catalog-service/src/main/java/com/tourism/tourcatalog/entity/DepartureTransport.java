@@ -3,6 +3,8 @@ package com.tourism.tourcatalog.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "departure_transports")
 @Data
@@ -19,12 +21,20 @@ public class DepartureTransport extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private VehicleType vehicleType;
 
-    private String departureLocation;
-    private String arrivalLocation;
-    private String departureTime;
-    private String arrivalTime;
-    private String transportCode;
-    private String note;
+    @Column(name = "vehicle_name")
+    private String vehicleName;
+
+    @Column(name = "start_point")
+    private String startPoint;
+
+    @Column(name = "end_point")
+    private String endPoint;
+
+    @Column(name = "depart_time")
+    private LocalDateTime departTime;
+
+    @Column(name = "arrival_time")
+    private LocalDateTime arrivalTime;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "departure_id")

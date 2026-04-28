@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 @Entity
 @Table(name = "booking_passengers")
@@ -16,12 +17,23 @@ public class BookingPassenger extends BaseEntity {
     private Integer passengerID;
 
     private String fullName;
-    private String phone;
+
+    private String gender;
+
+    @Column(name = "date_of_birth", nullable = false)
+    private LocalDate dateOfBirth;
 
     @Enumerated(EnumType.STRING)
     private PassengerType passengerType;
 
-    private BigDecimal price;
+    @Column(name = "base_price")
+    private BigDecimal basePrice;
+
+    @Column(name = "requires_single_room")
+    private Boolean requiresSingleRoom = false;
+
+    @Column(name = "single_room_surcharge")
+    private BigDecimal singleRoomSurcharge;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "booking_id")
