@@ -2,6 +2,7 @@ package com.tourism.tourcatalog.controller;
 
 import com.tourism.tourcatalog.dto.request.SearchToursRequest;
 import com.tourism.tourcatalog.dto.response.TourDisplayResponse;
+import com.tourism.tourcatalog.dto.response.TourSearchResponse;
 import com.tourism.tourcatalog.dto.response.TourSpecialResponse;
 import com.tourism.tourcatalog.service.TourService;
 import lombok.RequiredArgsConstructor;
@@ -68,9 +69,9 @@ public class TourController {
      * Response: TourDisplayResponse[] (cùng shape với /display)
      */
     @GetMapping("/search")
-    public ResponseEntity<List<TourDisplayResponse>> searchTours(
+    public ResponseEntity<List<TourSearchResponse>> searchTours(
             @ModelAttribute SearchToursRequest request) {
-        List<TourDisplayResponse> result = tourService.searchTours(request);
+        List<TourSearchResponse> result = tourService.searchTours(request);
         return ResponseEntity.ok(result);
     }
 }

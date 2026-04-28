@@ -2,6 +2,7 @@ package com.tourism.tourcatalog.service.impl;
 
 import com.tourism.tourcatalog.dto.request.SearchToursRequest;
 import com.tourism.tourcatalog.dto.response.TourDisplayResponse;
+import com.tourism.tourcatalog.dto.response.TourSearchResponse;
 import com.tourism.tourcatalog.dto.response.TourSpecialResponse;
 import com.tourism.tourcatalog.entity.Tour;
 import com.tourism.tourcatalog.entity.TourDeparture;
@@ -85,10 +86,12 @@ public class TourServiceImpl implements TourService {
      */
     @Override
     @Transactional(readOnly = true)
-    public List<TourDisplayResponse> searchTours(SearchToursRequest request) {
+    public List<TourSearchResponse> searchTours(SearchToursRequest request) {
         List<Tour> tours = tourRepository.searchToursDynamically(request);
         return tours.stream()
-                .map(t -> modelMapper.map(t, TourDisplayResponse.class))
+                .map(t -> modelMapper.map(t, TourSearchResponse.class))
+                // Lọc bỏ tour không có ngày khởi hành trong tương lai
+                .filter(r -> r.getDepartureDates() != null && !r.getDepartureDates().isEmpty())
                 .collect(Collectors.toList());
     }
 }

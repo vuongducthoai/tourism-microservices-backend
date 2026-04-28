@@ -2,6 +2,7 @@ package com.tourism.tourcatalog.service;
 
 import com.tourism.tourcatalog.dto.request.SearchToursRequest;
 import com.tourism.tourcatalog.dto.response.TourDisplayResponse;
+import com.tourism.tourcatalog.dto.response.TourSearchResponse;
 import com.tourism.tourcatalog.dto.response.TourSpecialResponse;
 
 import java.util.List;
@@ -14,5 +15,5 @@ public interface TourService {
     List<TourSpecialResponse> getTop10DeepestDiscountTours();
 
     /** GET /api/tours/search — tìm kiếm tour với các filter tuỳ chọn */
-    List<TourDisplayResponse> searchTours(SearchToursRequest request);
+    List<TourSearchResponse> searchTours(SearchToursRequest request);
 }

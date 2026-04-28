@@ -2,6 +2,7 @@ package com.tourism.tourcatalog.config;
 
 import com.tourism.tourcatalog.convert.TourDepartureToSpecialConverter;
 import com.tourism.tourcatalog.convert.TourToDisplayResponseConverter;
+import com.tourism.tourcatalog.convert.TourToSearchResponseConverter;
 import com.tourism.tourcatalog.dto.response.DestinationResponse;
 import com.tourism.tourcatalog.dto.response.LocationResponse;
 import com.tourism.tourcatalog.entity.Location;
@@ -16,17 +17,20 @@ public class AppConfig {
      * ModelMapper được cấu hình với:
      * 1. TourToDisplayResponseConverter     — Tour -> TourDisplayResponse (logic phức tạp, có traversal)
      * 2. TourDepartureToSpecialConverter    — TourDeparture -> TourSpecialResponse
-     * 3. TypeMap Location -> LocationResponse  — map image -> imageUrl
-     * 4. TypeMap Location -> DestinationResponse — map name/image/region sang tên khác
+     * 3. TourToSearchResponseConverter      — Tour -> TourSearchResponse (cho /search endpoint)
+     * 4. TypeMap Location -> LocationResponse  — map image -> imageUrl
+     * 5. TypeMap Location -> DestinationResponse — map name/image/region sang tên khác
      */
     @Bean
     public ModelMapper modelMapper(TourToDisplayResponseConverter displayConverter,
-                                   TourDepartureToSpecialConverter specialConverter) {
+                                   TourDepartureToSpecialConverter specialConverter,
+                                   TourToSearchResponseConverter searchConverter) {
         ModelMapper mm = new ModelMapper();
 
         // Custom converters cho logic phức tạp (traversal qua quan hệ)
         mm.addConverter(displayConverter);
         mm.addConverter(specialConverter);
+        mm.addConverter(searchConverter);
 
         // Location -> LocationResponse: field image -> imageUrl (tên khác nhau)
         mm.typeMap(Location.class, LocationResponse.class)

@@ -66,15 +66,15 @@ public class TourRepositoryCustomImpl implements TourRepositoryCustom {
                 LEFT JOIN FETCH t.departures
                 WHERE t.status = true
                   AND (:nameParam IS NULL
-                       OR LOWER(t.tourName) LIKE LOWER(CONCAT('%', :nameParam, '%')))
+                       OR LOWER(t.tourName) LIKE LOWER(CONCAT('%', CAST(:nameParam AS string), '%')))
                   AND (:startLocId IS NULL
                        OR t.startLocation.locationID = :startLocId)
                   AND (:endLocId IS NULL
                        OR t.endLocation.locationID = :endLocId)
                   AND (:transportParam IS NULL
-                       OR t.transportation LIKE CONCAT('%', :transportParam, '%'))
+                       OR t.transportation LIKE CONCAT('%', CAST(:transportParam AS string), '%'))
                   AND (:minRating IS NULL OR EXISTS (
-                         SELECT r FROM Review r
+                         SELECT r.tour.tourID FROM Review r
                          WHERE r.tour.tourID = t.tourID
                          GROUP BY r.tour.tourID
                          HAVING AVG(r.rating) >= :minRating
