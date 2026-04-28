@@ -20,7 +20,7 @@ public class DeparturePricing extends BaseEntity {
     @Column(name = "age_description", nullable = false)
     private String ageDescription;
 
-    @Column(name = "sale_price")
+    @Column(name = "price")
     private BigDecimal salePrice;
 
     @Column(name = "original_price")
