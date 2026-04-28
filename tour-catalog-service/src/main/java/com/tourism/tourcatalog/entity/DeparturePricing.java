@@ -16,7 +16,14 @@ public class DeparturePricing extends BaseEntity {
     private Integer pricingID;
 
     private String passengerType;
-    private BigDecimal price;
+
+    @Column(name = "age_description", nullable = false)
+    private String ageDescription;
+
+    @Column(name = "price")
+    private BigDecimal salePrice;
+
+    @Column(name = "original_price")
     private BigDecimal originalPrice;
 
     @ManyToOne(fetch = FetchType.LAZY)

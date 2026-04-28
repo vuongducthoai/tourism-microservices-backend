@@ -3,8 +3,7 @@ package com.tourism.tourcatalog.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Entity
@@ -17,22 +16,20 @@ public class TourDeparture extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer departureID;
 
-    @Column(name = "departure_code", unique = true, nullable = false)
-    private String departureCode;
-
     @Column(name = "departure_date", nullable = false)
-    private LocalDate departureDate;
-
-    @Column(name = "return_date")
-    private LocalDate returnDate;
+    private LocalDateTime departureDate;
 
     @Column(name = "available_slots")
     private Integer availableSlots;
 
-    @Column(name = "total_slots")
-    private Integer totalSlots;
+    @Column(name = "tour_guide_info", columnDefinition = "TEXT", nullable = false)
+    private String tourGuideInfo;
 
     private Boolean status = true;
+
+    // Tham chiếu sang Booking Service bằng ID (không dùng JPA relationship cross-service)
+    @Column(name = "coupon_id")
+    private Integer couponId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tour_id", nullable = false)

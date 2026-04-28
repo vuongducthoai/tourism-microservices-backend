@@ -4,5 +4,5 @@ public enum PassengerType {
     ADULT,
     CHILD,
     INFANT,
-    SENIOR
+    SINGLE_SUPPLEMENT
 }
