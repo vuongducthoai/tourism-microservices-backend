@@ -107,7 +107,7 @@ WHERE t.status = true
 
 ### 2. GET `/api/tours/deepest-discount`
 
-**Mục đích:** Lấy top 10 chuyến khởi hành tương lai có % giảm giá ADULT cao nhất, dùng cho section "Ưu đãi đặc biệt" trên homepage.
+**Mục đích:** Lấy top 10 **tour** có % giảm giá ADULT cao nhất, dùng cho section "Ưu đãi đặc biệt" trên homepage. Mỗi tour chỉ xuất hiện **1 lần** — nếu 1 tour có nhiều ngày khởi hành đều giảm giá thì chỉ lấy ngày có discount sâu nhất đại diện.
 
 **Frontend sử dụng:** Hook `useSpecialTours` → component `SpecialTours.jsx`
 
@@ -164,7 +164,11 @@ Request
                                                → toLocalDate().toString() "yyyy-MM-dd"
                           image              ← tour.images[0].imageUrl (lazy-load)
               └─► Java stream:
-                    .filter(r.discountPercentage > 0)
+                    .map(departure → TourSpecialResponse)
+                    .filter(discountPercentage > 0)
+                    // Dedup: 1 tour có nhiều departure → giữ departure discount cao nhất
+                    .collect(toMap(tourCode, r, (a,b) → max(discountPercentage)))
+                    .values().stream()
                     .sorted(discountPercentage DESC)
                     .limit(10)
   └─► ResponseEntity<List<TourSpecialResponse>> 200 OK
