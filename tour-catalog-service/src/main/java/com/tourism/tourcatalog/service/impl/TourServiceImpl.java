@@ -64,6 +64,15 @@ public class TourServiceImpl implements TourService {
         return departures.stream()
                 .map(d -> modelMapper.map(d, TourSpecialResponse.class))
                 .filter(r -> r.getDiscountPercentage() != null && r.getDiscountPercentage() > 0)
+                // Dedup theo tourCode: mỗi tour chỉ giữ 1 departure có discount cao nhất
+                .collect(Collectors.toMap(
+                        TourSpecialResponse::getTourCode,
+                        r -> r,
+                        (existing, replacement) ->
+                                existing.getDiscountPercentage() >= replacement.getDiscountPercentage()
+                                        ? existing : replacement
+                ))
+                .values().stream()
                 .sorted(Comparator.comparingInt(TourSpecialResponse::getDiscountPercentage).reversed())
                 .limit(10)
                 .collect(Collectors.toList());
