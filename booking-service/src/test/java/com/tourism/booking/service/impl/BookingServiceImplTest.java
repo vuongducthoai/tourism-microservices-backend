@@ -3,6 +3,7 @@ package com.tourism.booking.service.impl;
 import com.tourism.booking.convert.BookingConverter;
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
+import com.tourism.booking.dto.response.BookingBriefResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.entity.Booking;
 import com.tourism.booking.entity.BookingStatus;
@@ -731,6 +732,126 @@ class BookingServiceImplTest {
             assertThat(resp.getRefundAccountNumber()).isEqualTo("1234000000");
             assertThat(resp.getRefundAccountName()).isEqualTo("CUSTOMER");
             assertThat(resp.getRefundStatus()).isEqualTo("PENDING");
+        }
+    }
+
+    // ── GetBookingById Tests ──────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getBookingById()")
+    class GetBookingByIdTests {
+
+        @Test
+        @DisplayName("HAPPY PATH: returns brief response with userId, bookingCode, status")
+        void getBookingById_found_returnsBriefResponse() {
+            Booking b = makePaidBooking(77, 42, new BigDecimal("1000000"), BigDecimal.ZERO);
+            b.setBookingCode("BK-REVIEW01");
+
+            when(bookingRepository.findById(77)).thenReturn(Optional.of(b));
+
+            var result = service.getBookingById(77);
+
+            assertThat(result.getBookingID()).isEqualTo(77);
+            assertThat(result.getBookingCode()).isEqualTo("BK-REVIEW01");
+            assertThat(result.getBookingStatus()).isEqualTo("PAID");
+            assertThat(result.getUserId()).isEqualTo(42);
+        }
+
+        @Test
+        @DisplayName("BOOKING NOT FOUND: throws RuntimeException")
+        void getBookingById_notFound_throws() {
+            when(bookingRepository.findById(999)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.getBookingById(999))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("999");
+        }
+
+        @Test
+        @DisplayName("STATUS NULL: bookingStatus returned as null without NPE")
+        void getBookingById_nullStatus_returnsNull() {
+            Booking b = makePaidBooking(55, 10, BigDecimal.ZERO, BigDecimal.ZERO);
+            b.setBookingStatus(null);
+
+            when(bookingRepository.findById(55)).thenReturn(Optional.of(b));
+
+            var result = service.getBookingById(55);
+
+            assertThat(result.getBookingStatus()).isNull();
+        }
+    }
+
+    // ── UpdateBookingStatus Tests ─────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("updateBookingStatus()")
+    class UpdateBookingStatusTests {
+
+        @Test
+        @DisplayName("HAPPY PATH: PAID → REVIEWED saves booking with new status")
+        void updateStatus_paidToReviewed_saves() {
+            Booking b = makePaidBooking(10, 5, new BigDecimal("500000"), BigDecimal.ZERO);
+            when(bookingRepository.findById(10)).thenReturn(Optional.of(b));
+            when(bookingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.updateBookingStatus(10, "REVIEWED");
+
+            ArgumentCaptor<Booking> cap = ArgumentCaptor.forClass(Booking.class);
+            verify(bookingRepository).save(cap.capture());
+            assertThat(cap.getValue().getBookingStatus()).isEqualTo(BookingStatus.REVIEWED);
+        }
+
+        @Test
+        @DisplayName("HAPPY PATH: PENDING_REVIEW → REVIEWED (case-insensitive)")
+        void updateStatus_caseInsensitive() {
+            Booking b = makePaidBooking(11, 5, new BigDecimal("500000"), BigDecimal.ZERO);
+            b.setBookingStatus(BookingStatus.PENDING_REVIEW);
+            when(bookingRepository.findById(11)).thenReturn(Optional.of(b));
+            when(bookingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.updateBookingStatus(11, "reviewed"); // lowercase
+
+            ArgumentCaptor<Booking> cap = ArgumentCaptor.forClass(Booking.class);
+            verify(bookingRepository).save(cap.capture());
+            assertThat(cap.getValue().getBookingStatus()).isEqualTo(BookingStatus.REVIEWED);
+        }
+
+        @Test
+        @DisplayName("BOOKING NOT FOUND: throws RuntimeException, never saves")
+        void updateStatus_notFound_throws() {
+            when(bookingRepository.findById(404)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.updateBookingStatus(404, "REVIEWED"))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("404");
+            verify(bookingRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("INVALID STATUS: throws IllegalArgumentException, never saves")
+        void updateStatus_invalidStatus_throws() {
+            Booking b = makePaidBooking(20, 5, new BigDecimal("500000"), BigDecimal.ZERO);
+            when(bookingRepository.findById(20)).thenReturn(Optional.of(b));
+
+            assertThatThrownBy(() -> service.updateBookingStatus(20, "BOGUS_STATUS"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("BOGUS_STATUS");
+            verify(bookingRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("ALL VALID STATUSES: each status string is accepted")
+        void updateStatus_allValidStatuses_noException() {
+            String[] statuses = {
+                "PENDING_PAYMENT", "OVERDUE_PAYMENT", "PENDING_CONFIRMATION",
+                "PAID", "CANCELLED", "PENDING_REVIEW", "REVIEWED", "PENDING_REFUND"
+            };
+            for (String s : statuses) {
+                Booking b = makePaidBooking(1, 1, BigDecimal.ONE, BigDecimal.ZERO);
+                when(bookingRepository.findById(1)).thenReturn(Optional.of(b));
+                when(bookingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+                assertThatNoException().isThrownBy(() -> service.updateBookingStatus(1, s));
+            }
         }
     }
 }

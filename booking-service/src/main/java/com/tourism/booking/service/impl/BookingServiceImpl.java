@@ -2,6 +2,7 @@ package com.tourism.booking.service.impl;
 
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
+import com.tourism.booking.dto.response.BookingBriefResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.entity.*;
 import com.tourism.booking.convert.BookingConverter;
@@ -43,6 +44,39 @@ public class BookingServiceImpl implements BookingService {
     private final BookingConverter            bookingConverter;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
+
+    // ── GET booking by ID (internal, for cross-service calls) ────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public BookingBriefResponse getBookingById(Integer bookingId) {
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found: " + bookingId));
+        return new BookingBriefResponse(
+                booking.getBookingID(),
+                booking.getBookingCode(),
+                booking.getBookingStatus() != null ? booking.getBookingStatus().name() : null,
+                booking.getUserId()
+        );
+    }
+
+    // ── Update booking status (called by tour-catalog-service after review) ──
+
+    @Override
+    @Transactional
+    public void updateBookingStatus(Integer bookingId, String status) {
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found: " + bookingId));
+        BookingStatus newStatus;
+        try {
+            newStatus = BookingStatus.valueOf(status.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid booking status: " + status);
+        }
+        booking.setBookingStatus(newStatus);
+        bookingRepository.save(booking);
+        log.info("Updated booking {} status to {}", bookingId, newStatus);
+    }
 
     // ── GET bookings by user ─────────────────────────────────────────────────
 

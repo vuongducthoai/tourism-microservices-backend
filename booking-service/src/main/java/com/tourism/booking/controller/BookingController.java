@@ -2,6 +2,7 @@ package com.tourism.booking.controller;
 
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
+import com.tourism.booking.dto.response.BookingBriefResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.service.BookingService;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,29 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService bookingService;
+
+    /**
+     * GET /api/bookings/{bookingID}
+     * Internal endpoint: returns lightweight booking info (userId, status) for Feign callers.
+     * Used by tour-catalog-service after review submission.
+     */
+    @GetMapping("/{bookingID}")
+    public ResponseEntity<BookingBriefResponse> getBookingById(@PathVariable Integer bookingID) {
+        return ResponseEntity.ok(bookingService.getBookingById(bookingID));
+    }
+
+    /**
+     * POST /api/bookings/{bookingID}/status?status=REVIEWED
+     * Internal endpoint: update booking status. Called by tour-catalog-service after review submitted.
+     * NOTE: Using POST (not PATCH) because Java HttpURLConnection used by Feign does not support PATCH.
+     */
+    @PostMapping("/{bookingID}/status")
+    public ResponseEntity<Void> updateBookingStatus(
+            @PathVariable Integer bookingID,
+            @RequestParam String status) {
+        bookingService.updateBookingStatus(bookingID, status);
+        return ResponseEntity.ok().build();
+    }
 
     /**
      * GET /api/bookings/user/{userID}?bookingStatus=PAID
