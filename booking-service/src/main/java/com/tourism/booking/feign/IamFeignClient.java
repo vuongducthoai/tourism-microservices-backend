@@ -1,8 +1,8 @@
 package com.tourism.booking.feign;
 
 import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.math.BigDecimal;
@@ -12,8 +12,9 @@ public interface IamFeignClient {
 
     /**
      * Add coins to user's balance after a coin-refund cancellation.
-     * Maps to PATCH /api/users/{userId}/coins?amount=X in iam-service.
+     * Maps to POST /api/users/{userId}/coins?amount=X in iam-service.
+     * NOTE: Using POST instead of PATCH because Java HttpURLConnection does not support PATCH.
      */
-    @PatchMapping("/api/users/{userId}/coins")
+    @PostMapping("/api/users/{userId}/coins")
     void addCoins(@PathVariable Integer userId, @RequestParam BigDecimal amount);
 }

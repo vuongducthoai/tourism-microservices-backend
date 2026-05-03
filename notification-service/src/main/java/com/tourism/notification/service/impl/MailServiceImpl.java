@@ -1,0 +1,207 @@
+package com.tourism.notification.service.impl;
+
+import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.service.MailService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.text.NumberFormat;
+import java.util.Locale;
+
+/**
+ * Mirrors monolith's MailServiceImpl.
+ * sendRefundRequestNotification → email to ADMIN_EMAIL
+ * sendCancellationCoinEmail     → email to customer (coin-path cancel)
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class MailServiceImpl implements MailService {
+
+    private final JavaMailSender mailSender;
+
+    @Value("${spring.mail.username}")
+    private String fromEmail;
+
+    @Value("${app.admin.email:22110431@student.hcmute.edu.vn}")
+    private String adminEmail;
+
+    private static final NumberFormat VND_FMT =
+            NumberFormat.getCurrencyInstance(new Locale("vi", "VN"));
+
+    // ── Gửi email cho admin khi khách hàng submit refund request ───────────────
+    @Async
+    @Override
+    public void sendRefundRequestNotification(BookingEventDTO event) {
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(adminEmail);
+            msg.setSubject("YÊU CẦU HOÀN TIỀN MỚI: Booking Code " + event.getBookingCode());
+
+            BigDecimal refund = event.getRefundAmount() != null ? event.getRefundAmount() : BigDecimal.ZERO;
+
+            String body = String.format(
+                "Xin chào,\n\n" +
+                "Hệ thống nhận được một yêu cầu hủy và hoàn tiền mới.\n\n" +
+                "--- THÔNG TIN BOOKING ---\n" +
+                "Mã Booking  : %s\n" +
+                "Tên Tour    : %s\n" +
+                "Mã Tour     : %s\n" +
+                "Trạng thái  : Chờ hoàn tiền\n\n" +
+                "--- LIÊN HỆ KHÁCH HÀNG ---\n" +
+                "Họ & Tên    : %s\n" +
+                "Email       : %s\n" +
+                "Điện thoại  : %s\n" +
+                "Địa chỉ     : %s\n\n" +
+                "--- THÔNG TIN HOÀN TIỀN ---\n" +
+                "Số tiền hoàn: %s\n" +
+                "Tên TK      : %s\n" +
+                "Số TK       : %s\n" +
+                "Ngân hàng   : %s\n\n" +
+                "Vui lòng xử lý yêu cầu này trong hệ thống quản trị.\n\n" +
+                "Trân trọng,\nFuture Travel System",
+                event.getBookingCode(),
+                nvl(event.getTourName()),
+                nvl(event.getTourCode()),
+                nvl(event.getContactFullName()),
+                nvl(event.getContactEmail()),
+                nvl(event.getContactPhone()),
+                nvl(event.getContactAddress()),
+                VND_FMT.format(refund),
+                nvl(event.getRefundAccountName()),
+                nvl(event.getRefundAccountNumber()),
+                nvl(event.getRefundBank())
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Refund notification email sent to admin for booking: {}", event.getBookingCode());
+
+        } catch (Exception e) {
+            log.error("Failed to send refund notification email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    // ── Gửi email xác nhận hủy tour (coin path) cho khách hàng ───────────────
+    @Async
+    @Override
+    public void sendCancellationCoinEmail(BookingEventDTO event) {
+        if (event.getContactEmail() == null) return;
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getContactEmail());
+            msg.setSubject("XÁC NHẬN HỦY TOUR: Booking Code " + event.getBookingCode());
+
+            BigDecimal coins = event.getCoinRefundAmount() != null ? event.getCoinRefundAmount() : BigDecimal.ZERO;
+            BigDecimal vnd   = coins.multiply(new BigDecimal("1000"));
+
+            String body = String.format(
+                "Kính gửi Quý khách %s,\n\n" +
+                "Tour của Quý khách đã được hủy thành công.\n\n" +
+                "--- THÔNG TIN BOOKING ---\n" +
+                "Mã Booking  : %s\n" +
+                "Tên Tour    : %s\n" +
+                "Trạng thái  : Đã hủy\n\n" +
+                "--- HOÀN ĐIỂM CÁ NHÂN ---\n" +
+                "Số điểm hoàn: %s điểm (~%s)\n\n" +
+                "Điểm đã được cộng vào tài khoản của Quý khách.\n\n" +
+                "Nếu có thắc mắc, vui lòng liên hệ:\n" +
+                "Email: trananhthu270904@gmail.com  |  ĐT: 0339263066\n\n" +
+                "Trân trọng,\nFuture Travel Team",
+                nvl(event.getContactFullName()),
+                event.getBookingCode(),
+                nvl(event.getTourName()),
+                coins.toPlainString(),
+                VND_FMT.format(vnd)
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Cancellation (coin) email sent to {} for booking: {}",
+                    event.getContactEmail(), event.getBookingCode());
+
+        } catch (Exception e) {
+            log.error("Failed to send cancellation email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    // ── Gửi email thông báo trạng thái booking cho khách hàng ────────────────
+    @Async
+    @Override
+    public void sendBookingStatusEmail(BookingEventDTO event) {
+        // Placeholder: có thể mở rộng sau
+        log.info("sendBookingStatusEmail called for booking {} status {}",
+                event.getBookingCode(), event.getBookingStatus());
+    }
+
+    // ── Gửi email thông báo hủy tour (coin path) cho admin ───────────────────
+    @Async
+    @Override
+    public void sendCancellationAdminNotification(BookingEventDTO event) {
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(adminEmail);
+            msg.setSubject("THÔNG BÁO HỦY TOUR: Booking Code " + event.getBookingCode());
+
+            BigDecimal coins = event.getCoinRefundAmount() != null ? event.getCoinRefundAmount() : BigDecimal.ZERO;
+            BigDecimal vnd   = coins.multiply(new BigDecimal("1000"));
+            BigDecimal refund = event.getRefundAmount() != null ? event.getRefundAmount() : BigDecimal.ZERO;
+
+            String body = String.format(
+                "Xin chào Admin,\n\n" +
+                "Khách hàng vừa hủy tour thành công qua hệ thống.\n\n" +
+                "--- THÔNG TIN BOOKING ---\n" +
+                "Mã Booking  : %s\n" +
+                "Tên Tour    : %s\n" +
+                "Mã Tour     : %s\n" +
+                "Ngày khởi hành: %s\n" +
+                "Trạng thái  : Đã hủy\n" +
+                "Lý do hủy   : %s\n\n" +
+                "--- THÔNG TIN KHÁCH HÀNG ---\n" +
+                "Họ & Tên    : %s\n" +
+                "Email       : %s\n" +
+                "Điện thoại  : %s\n\n" +
+                "--- THÔNG TIN HOÀN TIỀN ---\n" +
+                "Tổng tiền booking: %s\n" +
+                "Số tiền hoàn    : %s\n" +
+                "Điểm hoàn       : %s điểm (~%s)\n\n" +
+                "Trân trọng,\nFuture Travel System",
+                event.getBookingCode(),
+                nvl(event.getTourName()),
+                nvl(event.getTourCode()),
+                event.getDepartureDate() != null ? event.getDepartureDate().toString() : "N/A",
+                nvl(event.getCancelReason()),
+                nvl(event.getContactFullName()),
+                nvl(event.getContactEmail()),
+                nvl(event.getContactPhone()),
+                VND_FMT.format(event.getTotalPrice() != null ? event.getTotalPrice() : BigDecimal.ZERO),
+                VND_FMT.format(refund),
+                coins.toPlainString(),
+                VND_FMT.format(vnd)
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Cancellation admin email sent for booking: {}", event.getBookingCode());
+
+        } catch (Exception e) {
+            log.error("Failed to send cancellation admin email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    private String nvl(String s) {
+        return s != null ? s : "N/A";
+    }
+}

@@ -51,10 +51,11 @@ public class UserController {
     }
 
     /**
-     * PATCH /api/users/{userID}/coins?amount=X
+     * POST /api/users/{userID}/coins?amount=X
      * Add coins to user's balance. Called internally by booking-service via Feign after coin-refund cancellation.
+     * NOTE: Using POST instead of PATCH because Java HttpURLConnection (Feign default) does not support PATCH.
      */
-    @PatchMapping("/{userID}/coins")
+    @PostMapping("/{userID}/coins")
     public ResponseEntity<Void> addCoins(
             @PathVariable Integer userID,
             @RequestParam BigDecimal amount
