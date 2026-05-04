@@ -154,7 +154,7 @@ Query: "Tour mã HCM-PQ tháng 6"
 └── Sparse search → exact match "HCM-PQ" + "tháng 6"
          │
          ▼
-    Merge kết quả (Reciprocal Rank Fusion)
+    Merge kết quả (Reciprocal Rank Fusion)1
          │
          ▼
     Top-K kết quả tốt hơn nhiều
