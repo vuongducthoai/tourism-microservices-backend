@@ -9,6 +9,8 @@ import com.tourism.tourcatalog.entity.DeparturePricing;
 import com.tourism.tourcatalog.entity.Tour;
 import com.tourism.tourcatalog.entity.TourDeparture;
 import com.tourism.tourcatalog.entity.TourImage;
+import com.tourism.tourcatalog.entity.FavoriteTour;
+import com.tourism.tourcatalog.repository.FavoriteTourRepository;
 import com.tourism.tourcatalog.repository.ReviewRepository;
 import com.tourism.tourcatalog.repository.TourDepartureRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
@@ -21,7 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -31,6 +35,7 @@ public class TourServiceImpl implements TourService {
     private final TourRepository          tourRepository;
     private final TourDepartureRepository departureRepository;
     private final ReviewRepository        reviewRepository;
+    private final FavoriteTourRepository  favoriteTourRepository;
     private final ModelMapper             modelMapper;
 
     /**
@@ -77,8 +82,23 @@ public class TourServiceImpl implements TourService {
     @Transactional(readOnly = true)
     public List<TourSearchResponse> searchTours(SearchToursRequest request) {
         List<Tour> tours = tourRepository.searchToursDynamically(request);
+
+        Set<Integer> favoriteTourIds = new HashSet<>();
+        if (request.getUserId() != null) {
+            favoriteTourIds = favoriteTourRepository
+                    .findByUserIdWithTourDetails(request.getUserId())
+                    .stream()
+                    .map(f -> f.getTour().getTourID())
+                    .collect(Collectors.toSet());
+        }
+        final Set<Integer> finalFavIds = favoriteTourIds;
+
         return tours.stream()
-                .map(t -> modelMapper.map(t, TourSearchResponse.class))
+                .map(t -> {
+                    TourSearchResponse r = modelMapper.map(t, TourSearchResponse.class);
+                    r.setIsFavorite(finalFavIds.contains(t.getTourID()));
+                    return r;
+                })
                 .filter(r -> r.getDepartureDates() != null && !r.getDepartureDates().isEmpty())
                 .collect(Collectors.toList());
     }

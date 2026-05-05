@@ -27,4 +27,5 @@ public class SearchToursRequest {
     private Integer    endLocationID;
     private String     transportation;
     private Integer    rating;
+    private Integer    userId;
 }
