@@ -21,8 +21,8 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: ${MAIL_USERNAME:your-email@gmail.com}
-    password: ${MAIL_PASSWORD:your-app-password}
+    username: ${MAIL_USERNAME:trananhthu270904@gmail.com}
+    password: ${MAIL_PASSWORD:kskw auzz nimm uybc}
     properties:
       mail.smtp:
         auth: true
@@ -39,13 +39,6 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
 
-  # ─── RabbitMQ ───
-  rabbitmq:
-    host: ${RABBITMQ_HOST:localhost}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USERNAME:tourism}
-    password: ${RABBITMQ_PASSWORD:tourism123}
-
 eureka:
   client:
     service-url:
@@ -58,3 +51,7 @@ management:
     web:
       exposure:
         include: health,info
+
+app:
+  admin:
+    email: ${ADMIN_EMAIL:22110431@student.hcmute.edu.vn}

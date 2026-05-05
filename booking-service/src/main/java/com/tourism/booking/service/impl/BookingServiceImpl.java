@@ -2,10 +2,13 @@ package com.tourism.booking.service.impl;
 
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
-import com.tourism.booking.dto.response.BookingPassengerResponse;
+import com.tourism.booking.dto.response.BookingBriefResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.entity.*;
+import com.tourism.booking.convert.BookingConverter;
+import com.tourism.booking.event.BookingEventDTO;
 import com.tourism.booking.feign.IamFeignClient;
+import com.tourism.booking.feign.NotificationFeignClient;
 import com.tourism.booking.feign.PaymentFeignClient;
 import com.tourism.booking.feign.TourCatalogFeignClient;
 import com.tourism.booking.feign.dto.DepartureInfoResponse;
@@ -37,8 +40,43 @@ public class BookingServiceImpl implements BookingService {
     private final TourCatalogFeignClient      tourCatalogClient;
     private final PaymentFeignClient          paymentClient;
     private final IamFeignClient              iamClient;
+    private final NotificationFeignClient     notificationClient;
+    private final BookingConverter            bookingConverter;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
+
+    // ── GET booking by ID (internal, for cross-service calls) ────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public BookingBriefResponse getBookingById(Integer bookingId) {
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found: " + bookingId));
+        return new BookingBriefResponse(
+                booking.getBookingID(),
+                booking.getBookingCode(),
+                booking.getBookingStatus() != null ? booking.getBookingStatus().name() : null,
+                booking.getUserId()
+        );
+    }
+
+    // ── Update booking status (called by tour-catalog-service after review) ──
+
+    @Override
+    @Transactional
+    public void updateBookingStatus(Integer bookingId, String status) {
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found: " + bookingId));
+        BookingStatus newStatus;
+        try {
+            newStatus = BookingStatus.valueOf(status.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid booking status: " + status);
+        }
+        booking.setBookingStatus(newStatus);
+        bookingRepository.save(booking);
+        log.info("Updated booking {} status to {}", bookingId, newStatus);
+    }
 
     // ── GET bookings by user ─────────────────────────────────────────────────
 
@@ -97,7 +135,32 @@ public class BookingServiceImpl implements BookingService {
         booking.setBookingStatus(BookingStatus.CANCELLED);
         booking.setRefundAmount(refundableAmount);
 
-        return toResponse(bookingRepository.save(booking));
+        BookingResponse saved = toResponse(bookingRepository.save(booking));
+
+        // Gọi notification-service trực tiếp (fire-and-forget)
+        try {
+            notificationClient.notifyStatusUpdated(BookingEventDTO.builder()
+                .bookingID(booking.getBookingID())
+                .bookingCode(booking.getBookingCode())
+                .bookingStatus("CANCELLED")
+                .cancelReason(booking.getCancelReason())
+                .contactFullName(booking.getContactFullName())
+                .contactEmail(booking.getContactEmail())
+                .contactPhone(booking.getContactPhone())
+                .totalPrice(booking.getTotalPrice())
+                .paidByCoin(booking.getPaidByCoin())
+                .refundAmount(refundableAmount)
+                .coinRefundAmount(coinRefundAmount)
+                .userId(booking.getUserId())
+                .tourName(saved.getTourName())
+                .tourCode(saved.getTourCode())
+                .departureDate(saved.getDepartureDate())
+                .build());
+        } catch (Exception e) {
+            log.error("Failed to notify status update for booking {}: {}", saved.getBookingCode(), e.getMessage());
+        }
+
+        return saved;
     }
 
     // ── Submit refund request (BANK refund path — same as monolith) ──────────
@@ -136,7 +199,34 @@ public class BookingServiceImpl implements BookingService {
         booking.setBookingStatus(BookingStatus.PENDING_REFUND);
         booking.setRefundAmount(totalRefundAmount);
 
-        return toResponse(bookingRepository.save(booking));
+        BookingResponse saved = toResponse(bookingRepository.save(booking));
+
+        // Gọi notification-service trực tiếp (fire-and-forget)
+        try {
+            notificationClient.notifyRefundRequested(BookingEventDTO.builder()
+                .bookingID(booking.getBookingID())
+                .bookingCode(booking.getBookingCode())
+                .bookingStatus("PENDING_REFUND")
+                .contactFullName(booking.getContactFullName())
+                .contactEmail(booking.getContactEmail())
+                .contactPhone(booking.getContactPhone())
+                .contactAddress(booking.getContactAddress())
+                .totalPrice(booking.getTotalPrice())
+                .paidByCoin(booking.getPaidByCoin())
+                .refundAmount(totalRefundAmount)
+                .refundBank(request.getBank())
+                .refundAccountNumber(request.getAccountNumber())
+                .refundAccountName(request.getAccountName())
+                .userId(booking.getUserId())
+                .tourName(saved.getTourName())
+                .tourCode(saved.getTourCode())
+                .departureDate(saved.getDepartureDate())
+                .build());
+        } catch (Exception e) {
+            log.error("Failed to notify refund request for booking {}: {}", saved.getBookingCode(), e.getMessage());
+        }
+
+        return saved;
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -195,39 +285,15 @@ public class BookingServiceImpl implements BookingService {
         return BigDecimal.ONE; // past departure — no refund
     }
 
+    // ── toResponse: delegate to BookingConverter ────────────────────────────
+
     private BookingResponse toResponse(Booking booking) {
-        BookingResponse res = new BookingResponse();
-        res.setBookingID(booking.getBookingID());
-        res.setBookingCode(booking.getBookingCode());
-        res.setBookingDate(booking.getBookingDate());
-        res.setContactEmail(booking.getContactEmail());
-        res.setContactFullName(booking.getContactFullName());
-        res.setContactPhone(booking.getContactPhone());
-        res.setContactAddress(booking.getContactAddress());
-        res.setCustomerNote(booking.getCustomerNote());
-        res.setTotalPassengers(booking.getTotalPassengers());
-        res.setSubtotalPrice(booking.getSubtotalPrice());
-        res.setSurcharge(booking.getSurcharge());
-        res.setCouponDiscount(booking.getCouponDiscount());
-        res.setPaidByCoin(booking.getPaidByCoin());
-        res.setTotalPrice(booking.getTotalPrice());
-        res.setCancelReason(booking.getCancelReason());
-        res.setRefundAmount(booking.getRefundAmount());
-        res.setBookingStatus(booking.getBookingStatus() != null ? booking.getBookingStatus().name() : null);
-        res.setAppliedCouponCodes(booking.getAppliedCouponCodes());
-        res.setDepartureID(booking.getDepartureId());
+        BookingResponse res = bookingConverter.toResponse(booking);
 
         // Fetch departure/tour info from tour-catalog-service
         try {
             DepartureInfoResponse depInfo = tourCatalogClient.getDepartureInfo(booking.getDepartureId());
-            if (depInfo != null) {
-                res.setDepartureDate(depInfo.getDepartureDate());
-                res.setTourID(depInfo.getTourID());
-                res.setTourCode(depInfo.getTourCode());
-                res.setTourName(depInfo.getTourName());
-                res.setImage(depInfo.getImage());
-                res.setDuration(depInfo.getDuration());
-            }
+            bookingConverter.enrichFromDeparture(res, depInfo);
         } catch (Exception e) {
             log.warn("Could not fetch departure info for bookingID={}: {}", booking.getBookingID(), e.getMessage());
         }
@@ -235,43 +301,11 @@ public class BookingServiceImpl implements BookingService {
         // Fetch payment info from payment-service
         try {
             PaymentInfoResponse payInfo = paymentClient.getPaymentByBooking(booking.getBookingID());
-            if (payInfo != null) {
-                res.setPaymentID(payInfo.getPaymentID());
-                res.setPaymentAmount(payInfo.getAmount());
-                res.setTimeLimit(payInfo.getTimeLimit());
-                res.setPaymentMethod(payInfo.getPaymentMethod());
-                res.setPaymentStatus(payInfo.getStatus());
-            }
+            bookingConverter.enrichFromPayment(res, payInfo);
         } catch (FeignException.NotFound ignored) {
             // No payment yet (PENDING_PAYMENT status)
         } catch (Exception e) {
             log.warn("Could not fetch payment info for bookingID={}: {}", booking.getBookingID(), e.getMessage());
-        }
-
-        // Map passengers
-        if (booking.getPassengers() != null) {
-            List<BookingPassengerResponse> paxList = booking.getPassengers().stream().map(p -> {
-                BookingPassengerResponse pRes = new BookingPassengerResponse();
-                pRes.setPassengerID(p.getPassengerID());
-                pRes.setFullName(p.getFullName());
-                pRes.setGender(p.getGender());
-                pRes.setDateOfBirth(p.getDateOfBirth());
-                pRes.setPassengerType(p.getPassengerType() != null ? p.getPassengerType().name() : null);
-                pRes.setBasePrice(p.getBasePrice());
-                pRes.setRequiresSingleRoom(p.getRequiresSingleRoom());
-                pRes.setSingleRoomSurcharge(p.getSingleRoomSurcharge());
-                return pRes;
-            }).collect(Collectors.toList());
-            res.setPassengers(paxList);
-        }
-
-        // Map refund info
-        if (booking.getRefundInformation() != null) {
-            RefundInformation ri = booking.getRefundInformation();
-            res.setRefundBank(ri.getBank());
-            res.setRefundAccountNumber(ri.getAccountNumber());
-            res.setRefundAccountName(ri.getAccountName());
-            res.setRefundStatus(ri.getRefundStatus());
         }
 
         return res;

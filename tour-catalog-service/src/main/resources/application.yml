@@ -20,6 +20,9 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
+  web:
+    resources:
+      static-locations: file:uploads/,classpath:/static/
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -38,6 +41,10 @@ cloudinary:
   api-key: ${CLOUDINARY_API_KEY:939641688935771}
   api-secret: ${CLOUDINARY_API_SECRET:WPzZSJqg4MVvHKUuvPFeHL981J0}
 
+app:
+  upload:
+    dir: ${UPLOAD_DIR:uploads}
+
 eureka:
   client:
     service-url:
@@ -49,6 +56,9 @@ feign:
   client:
     config:
       iam-service:
+        connectTimeout: 5000
+        readTimeout: 5000
+      booking-service:
         connectTimeout: 5000
         readTimeout: 5000
 

@@ -34,6 +34,9 @@ public class PaymentController {
         res.setTimeLimit(payment.getTimeLimit());
         res.setPaymentMethod(payment.getPaymentMethod() != null ? payment.getPaymentMethod().name() : null);
         res.setStatus(payment.getStatus() != null ? payment.getStatus().name() : null);
+        res.setBank(payment.getBank());
+        res.setAccountNumber(payment.getAccountNumber());
+        res.setAccountName(payment.getAccountName());
         return ResponseEntity.ok(res);
     }
 }

@@ -315,15 +315,15 @@ services:
       - SPRING_DATASOURCE_PASSWORD=postgres
       - EUREKA_HOST=service-discovery
       - REDIS_HOST=redis
-      - RABBITMQ_HOST=rabbitmq
+      - MAIL_USERNAME=trananhthu270904@gmail.com
+      - MAIL_PASSWORD=kskw auzz nimm uybc
+      - ADMIN_EMAIL=22110431@student.hcmute.edu.vn
     depends_on:
       service-discovery:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8086/actuator/health" ]

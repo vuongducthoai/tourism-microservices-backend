@@ -2,6 +2,7 @@ package com.tourism.tourcatalog.service;
 
 import com.tourism.tourcatalog.dto.request.RegionRequest;
 import com.tourism.tourcatalog.dto.response.DestinationResponse;
+import com.tourism.tourcatalog.dto.response.LocationChatbotSyncResponse;
 import com.tourism.tourcatalog.dto.response.LocationResponse;
 
 import java.util.List;
@@ -18,4 +19,7 @@ public interface LocationService {
      * @throws IllegalArgumentException nếu region không hợp lệ -> 400 Bad Request
      */
     List<DestinationResponse> getDestinationsByRegion(RegionRequest request);
+
+    /** GET /api/locations/chatbot-sync — tất cả điểm đến active với đầy đủ thông tin */
+    List<LocationChatbotSyncResponse> getAllLocationsForChatbotSync();
 }

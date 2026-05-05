@@ -39,12 +39,13 @@ public class BookingResponse {
     private String        image;
     private String        duration;
 
-    // Payment info (from payment-service, may be null)
+    // Payment info (from payment-service, may be null) — field names match monolith BookingResponseDTO
     private Integer       paymentID;
-    private BigDecimal    paymentAmount;
+    private BigDecimal    amount;           // monolith: amount (NOT paymentAmount)
     private LocalDateTime timeLimit;
-    private String        paymentMethod;
-    private String        paymentStatus;
+    private String        bank;             // monolith: bank
+    private String        accountNumber;    // monolith: accountNumber
+    private String        accountName;      // monolith: accountName
 
     // Passengers
     private List<BookingPassengerResponse> passengers;
