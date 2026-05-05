@@ -2,6 +2,7 @@ package com.tourism.tourcatalog.service.impl;
 
 import com.tourism.tourcatalog.dto.request.RegionRequest;
 import com.tourism.tourcatalog.dto.response.DestinationResponse;
+import com.tourism.tourcatalog.dto.response.LocationChatbotSyncResponse;
 import com.tourism.tourcatalog.dto.response.LocationResponse;
 import com.tourism.tourcatalog.entity.Location;
 import com.tourism.tourcatalog.entity.Region;
@@ -22,10 +23,6 @@ public class LocationServiceImpl implements LocationService {
     private final LocationRepository locationRepository;
     private final ModelMapper        modelMapper;
 
-    /**
-     * GET /api/locations/start-location
-     * Location -> LocationResponse: imageUrl <- location.image (TypeMap trong AppConfig)
-     */
     @Override
     @Transactional(readOnly = true)
     public List<LocationResponse> getStartLocations() {
@@ -34,9 +31,6 @@ public class LocationServiceImpl implements LocationService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * GET /api/locations/end-location
-     */
     @Override
     @Transactional(readOnly = true)
     public List<LocationResponse> getEndLocations() {
@@ -45,18 +39,6 @@ public class LocationServiceImpl implements LocationService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * POST /api/locations/destinations-by-region
-     *
-     * Chuyển region string -> Region enum.
-     * IllegalArgumentException nếu value không hợp lệ -> Spring tự trả 400.
-     *
-     * Location -> DestinationResponse:
-     *   endPoint  <- location.name
-     *   listImage <- location.image
-     *   region    <- location.region.name()
-     * (TypeMap được cấu hình trong AppConfig)
-     */
     @Override
     @Transactional(readOnly = true)
     public List<DestinationResponse> getDestinationsByRegion(RegionRequest request) {
@@ -69,4 +51,26 @@ public class LocationServiceImpl implements LocationService {
                 })
                 .collect(Collectors.toList());
     }
+
+    /**
+     * GET /api/locations/chatbot-sync
+     * Lấy tất cả location active với đầy đủ thông tin (region, airport) để sync Pinecone.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<LocationChatbotSyncResponse> getAllLocationsForChatbotSync() {
+        return locationRepository.findAll().stream()
+                .filter(Location::isStatus)
+                .map(l -> LocationChatbotSyncResponse.builder()
+                        .locationID(l.getLocationID())
+                        .name(l.getName())
+                        .imageUrl(l.getImage())
+                        .description(l.getDescription())
+                        .region(l.getRegion() != null ? l.getRegion().name() : null)
+                        .airportCode(l.getAirportCode())
+                        .airportName(l.getAirportName())
+                        .build())
+                .collect(Collectors.toList());
+    }
 }
+

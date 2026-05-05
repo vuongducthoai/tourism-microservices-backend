@@ -1,5 +1,6 @@
 package com.tourism.tourcatalog.service.impl;
 
+import com.tourism.tourcatalog.dto.response.ReviewChatbotSyncResponse;
 import com.tourism.tourcatalog.dto.request.ReviewRequest;
 import com.tourism.tourcatalog.dto.response.ReviewResponse;
 import com.tourism.tourcatalog.dto.response.ReviewStatisticsResponse;
@@ -266,5 +267,22 @@ public class ReviewServiceImpl implements ReviewService {
 
     private double round(double value) {
         return Math.round(value * 10.0) / 10.0;
+    }
+
+    // ── Chatbot sync ─────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReviewChatbotSyncResponse> getAllVisibleReviewsForChatbot() {
+        return reviewRepository.findAllVisible().stream()
+                .map(r -> ReviewChatbotSyncResponse.builder()
+                        .reviewID(r.getReviewID())
+                        .tourID(r.getTour() != null ? r.getTour().getTourID() : null)
+                        .tourCode(r.getTour() != null ? r.getTour().getTourCode() : null)
+                        .tourName(r.getTour() != null ? r.getTour().getTourName() : null)
+                        .rating(r.getRating())
+                        .comment(r.getComment())
+                        .build())
+                .collect(Collectors.toList());
     }
 }

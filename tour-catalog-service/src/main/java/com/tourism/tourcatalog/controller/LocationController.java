@@ -1,5 +1,6 @@
 package com.tourism.tourcatalog.controller;
 
+import com.tourism.tourcatalog.dto.response.LocationChatbotSyncResponse;
 import com.tourism.tourcatalog.dto.request.RegionRequest;
 import com.tourism.tourcatalog.dto.response.DestinationResponse;
 import com.tourism.tourcatalog.dto.response.LocationResponse;
@@ -62,5 +63,15 @@ public class LocationController {
     public ResponseEntity<List<DestinationResponse>> getDestinationsByRegion(
             @Valid @RequestBody RegionRequest request) {
         return ResponseEntity.ok(locationService.getDestinationsByRegion(request));
+    }
+
+    /**
+     * GET /api/locations/chatbot-sync
+     * Lấy tất cả location active với đầy đủ thông tin (region, airport) để sync lên Pinecone.
+     * Endpoint nội bộ — gọi từ analytics-service qua Feign.
+     */
+    @GetMapping("/chatbot-sync")
+    public ResponseEntity<List<LocationChatbotSyncResponse>> getChatbotSyncLocations() {
+        return ResponseEntity.ok(locationService.getAllLocationsForChatbotSync());
     }
 }

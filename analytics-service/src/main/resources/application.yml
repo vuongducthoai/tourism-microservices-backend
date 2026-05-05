@@ -25,7 +25,7 @@ spring:
 # ─── Gemini AI ───
 gemini:
   api:
-    key: ${GEMINI_API_KEY:your-gemini-api-key}
+    key: ${GEMINI_API_KEY:AIzaSyA8F9E9UK4dFGzWxlGN0u0Pk1IoQir0n7I}
   generation:
     model: gemini-2.0-flash
     temperature: 0.7
@@ -36,13 +36,13 @@ chatbot:
   vector-db:
     provider: pinecone
     pinecone:
-      api-key: ${PINECONE_API_KEY:your-pinecone-key}
+      api-key: ${PINECONE_API_KEY:pcsk_4NU2Hz_FNyvrV1c4YHNEJi1rdEvkEnJLE7wUAihBLpizDAvMbg9UwzhY7i5hr4U4NToVM7}
       environment: ${PINECONE_ENV:us-east-1-aws}
       index-name: tourism-chatbot
-      host: ${PINECONE_HOST:https://tourism-chatbot.svc.pinecone.io}
+      host: ${PINECONE_HOST:https://tourism-chatbot-g2idbvy.svc.aped-4627-b74a.pinecone.io}
   embedding:
-    model: text-embedding-004
-    dimension: 768
+    model: llama-text-embed-v2
+    dimension: 1024
     max-tokens: 1000
 
 eureka:

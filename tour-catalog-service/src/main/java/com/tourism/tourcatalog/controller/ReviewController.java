@@ -1,5 +1,6 @@
 package com.tourism.tourcatalog.controller;
 
+import com.tourism.tourcatalog.dto.response.ReviewChatbotSyncResponse;
 import com.tourism.tourcatalog.dto.request.ReviewRequest;
 import com.tourism.tourcatalog.dto.response.ReviewResponse;
 import com.tourism.tourcatalog.dto.response.ReviewStatisticsResponse;
@@ -83,6 +84,16 @@ public class ReviewController {
     @GetMapping("/tour/{tourCode}/statistics")
     public ResponseEntity<ReviewStatisticsResponse> getReviewStatistics(@PathVariable String tourCode) {
         return ResponseEntity.ok(reviewService.getReviewStatistics(tourCode));
+    }
+
+    /**
+     * GET /api/reviews/chatbot-sync
+     * Lấy tất cả review visible để analytics-service sync lên Pinecone.
+     * Endpoint nội bộ — gọi từ analytics-service qua Feign.
+     */
+    @GetMapping("/chatbot-sync")
+    public ResponseEntity<List<ReviewChatbotSyncResponse>> getChatbotSyncReviews() {
+        return ResponseEntity.ok(reviewService.getAllVisibleReviewsForChatbot());
     }
 }
 

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface ReviewRepository extends JpaRepository<Review, Integer> {
@@ -37,4 +38,10 @@ public interface ReviewRepository extends JpaRepository<Review, Integer> {
     @Query("SELECT COUNT(r) FROM Review r " +
            "WHERE r.tour.tourCode = :tourCode AND r.isVisible = true")
     Integer countByTourCode(@Param("tourCode") String tourCode);
+
+    /**
+     * Lấy tất cả review visible kèm thông tin tour — dùng để sync lên chatbot Vector DB.
+     */
+    @Query("SELECT r FROM Review r JOIN FETCH r.tour t WHERE r.isVisible = true")
+    List<Review> findAllVisible();
 }
