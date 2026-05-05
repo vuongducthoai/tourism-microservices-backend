@@ -2,9 +2,11 @@ package com.tourism.analytics.service;
 
 import com.google.gson.Gson;
 import com.tourism.analytics.dto.VectorDocumentDTO;
+import com.tourism.analytics.dto.feign.CouponSyncDTO;
 import com.tourism.analytics.dto.feign.LocationSyncDTO;
 import com.tourism.analytics.dto.feign.ReviewSyncDTO;
 import com.tourism.analytics.dto.feign.TourSyncDTO;
+import com.tourism.analytics.feign.BookingFeignClient;
 import com.tourism.analytics.feign.TourCatalogFeignClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +24,7 @@ import java.util.*;
  *   - TOUR_DEPARTURE : thông tin từng departure (ngày khởi hành + giá)
  *   - LOCATION       : điểm đến du lịch
  *   - REVIEW         : đánh giá của khách hàng
+ *   - COUPON         : mã giảm giá từ booking-service
  *
  * Chạy tự động lúc 2:00 AM mỗi ngày.
  */
@@ -31,6 +34,7 @@ import java.util.*;
 public class VectorSyncService {
 
     private final TourCatalogFeignClient tourCatalogFeignClient;
+    private final BookingFeignClient     bookingFeignClient;
     private final VectorService          vectorService;
     private final Gson                   gson = new Gson();
 
@@ -44,11 +48,12 @@ public class VectorSyncService {
      */
     public void syncAll() {
         log.info("🔄 Starting full sync to Pinecone...");
-        int tourDocs  = syncAllTours();
-        int locDocs   = syncAllLocations();
-        int revDocs   = syncAllReviews();
-        log.info("✅ Sync completed: {} tour docs, {} location docs, {} review docs",
-                tourDocs, locDocs, revDocs);
+        int tourDocs   = syncAllTours();
+        int locDocs    = syncAllLocations();
+        int revDocs    = syncAllReviews();
+        int couponDocs = syncAllCoupons();
+        log.info("✅ Sync completed: {} tour docs, {} location docs, {} review docs, {} coupon docs",
+                tourDocs, locDocs, revDocs, couponDocs);
     }
 
     // ─────────────────────────────────────────────
@@ -391,6 +396,89 @@ public class VectorSyncService {
                 + " (" + nvl(review.getTourCode()) + ")"
                 + " | Điểm: " + review.getRating() + "/5"
                 + " | Nhận xét: " + review.getComment();
+    }
+
+    // ─────────────────────────────────────────────
+    // INTERNAL — COUPONS
+    // ─────────────────────────────────────────────
+
+    /**
+     * Sync tất cả coupon active từ booking-service.
+     * @return số document đã upsert
+     */
+    public int syncAllCoupons() {
+        try {
+            List<CouponSyncDTO> coupons = bookingFeignClient.getCouponsForChatbotSync();
+            log.info("📦 Fetched {} coupons for sync", coupons.size());
+            int count = 0;
+            for (CouponSyncDTO coupon : coupons) {
+                count += syncCoupon(coupon);
+            }
+            log.info("✅ Coupons synced: {} documents", count);
+            return count;
+        } catch (Exception e) {
+            log.error("❌ Error syncing coupons: {}", e.getMessage(), e);
+            return 0;
+        }
+    }
+
+    private int syncCoupon(CouponSyncDTO coupon) {
+        try {
+            String content = buildCouponContent(coupon);
+            String docId   = "COUPON_" + coupon.getCouponID();
+
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("couponID",      coupon.getCouponID());
+            meta.put("couponCode",    nvl(coupon.getCouponCode()));
+            meta.put("description",   nvl(coupon.getDescription()));
+            meta.put("discountAmount", coupon.getDiscountAmount() != null ? coupon.getDiscountAmount() : 0);
+            meta.put("startDate",     nvl(coupon.getStartDate()));
+            meta.put("endDate",       nvl(coupon.getEndDate()));
+            meta.put("usageLimit",    coupon.getUsageLimit() != null ? coupon.getUsageLimit() : 0);
+            meta.put("usageCount",    coupon.getUsageCount() != null ? coupon.getUsageCount() : 0);
+            meta.put("couponType",    nvl(coupon.getCouponType()));
+            if (coupon.getDepartureId() != null) {
+                meta.put("departureId", coupon.getDepartureId());
+            }
+
+            List<Float> embedding = vectorService.createEmbedding(content);
+            if (embedding.isEmpty()) return 0;
+
+            vectorService.upsertVector(VectorDocumentDTO.builder()
+                    .id(docId)
+                    .content(content)
+                    .type("COUPON")
+                    .entityId(coupon.getCouponID())
+                    .embedding(embedding)
+                    .metadata(gson.toJson(meta))
+                    .build());
+            return 1;
+        } catch (Exception e) {
+            log.error("❌ Error syncing coupon {}: {}", coupon.getCouponCode(), e.getMessage());
+            return 0;
+        }
+    }
+
+    private String buildCouponContent(CouponSyncDTO coupon) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Mã giảm giá: ").append(nvl(coupon.getCouponCode()))
+          .append(" | Giảm: ").append(String.format("%,d", coupon.getDiscountAmount() != null ? coupon.getDiscountAmount() : 0)).append(" VND");
+        if ("DEPARTURE".equals(coupon.getCouponType()) && coupon.getDepartureId() != null) {
+            sb.append(" | Loại: Áp dụng riêng cho lịch khởi hành ID=").append(coupon.getDepartureId());
+        } else {
+            sb.append(" | Loại: Áp dụng cho tất cả tour (toàn hệ thống)");
+        }
+        if (hasText(coupon.getDescription())) {
+            sb.append(" | Mô tả: ").append(coupon.getDescription());
+        }
+        if (hasText(coupon.getEndDate())) {
+            sb.append(" | Hạn sử dụng: ").append(coupon.getEndDate().substring(0, 10));
+        }
+        if (coupon.getUsageLimit() != null && coupon.getUsageLimit() > 0) {
+            int remaining = coupon.getUsageLimit() - (coupon.getUsageCount() != null ? coupon.getUsageCount() : 0);
+            sb.append(" | Còn lại: ").append(remaining).append(" lượt");
+        }
+        return sb.toString();
     }
 
     // ─────────────────────────────────────────────

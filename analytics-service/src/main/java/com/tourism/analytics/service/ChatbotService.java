@@ -45,9 +45,17 @@ public class ChatbotService {
     private static final String GEMINI_GENERATE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/";
 
-    // Regex detect câu hỏi về giảm giá / ưu đãi
+    // Regex detect câu hỏi về giảm giá theo giá (originalPrice > salePrice)
+    // Khớp cả có dấu lẫn không dấu (giam gia / giảm giá)
     private static final String DISCOUNT_PATTERN =
-            ".*(giảm\\s*(giá|sâu)|ưu\\s*đãi|khuyến\\s*mãi|coupon|mã\\s*giảm|rẻ\\s*nhất|tiết\\s*kiệm).*";
+            ".*(giảm\\s*(giá|sâu)|giam\\s*(gia|sau)|ưu\\s*đãi|uu\\s*dai|khuyến\\s*mãi|khuyen\\s*mai"
+            + "|rẻ\\s*nhất|re\\s*nhat|tiết\\s*kiệm|tiet\\s*kiem|sale|giá\\s*tốt|gia\\s*tot|giá\\s*rẻ|gia\\s*re"
+            + "|ty\\s*le\\s*giam|tỷ\\s*lệ\\s*giảm).*";
+
+    // Regex detect câu hỏi về coupon / mã giảm giá cụ thể (có dấu và không dấu)
+    private static final String COUPON_PATTERN =
+            ".*(coupon|mã\\s*giảm|ma\\s*giam|voucher|mã\\s*khuyến|ma\\s*khuyen|mã\\s*ưu|ma\\s*uu"
+            + "|promo\\s*code|discount\\s*code).*";
 
     // ─────────────────────────────────────────────
     // MAIN HANDLER
@@ -63,7 +71,8 @@ public class ChatbotService {
         String sessionId   = request.getSessionId() != null ? request.getSessionId() : UUID.randomUUID().toString();
 
         boolean isDiscountQuery = userMessage.toLowerCase().matches(DISCOUNT_PATTERN);
-        int topK = isDiscountQuery ? 50 : 10;
+        boolean isCouponQuery   = userMessage.toLowerCase().matches(COUPON_PATTERN);
+        int topK = (isDiscountQuery || isCouponQuery) ? 50 : 10;
 
         // 1. Retrieve from Pinecone
         List<VectorDocumentDTO> docs = vectorService.searchSimilar(userMessage, topK);
@@ -105,52 +114,73 @@ public class ChatbotService {
             return "Không tìm thấy thông tin liên quan trong hệ thống.";
         }
 
-        boolean isDiscountQuery = userMessage.toLowerCase().matches(DISCOUNT_PATTERN);
+        String lowerMsg = userMessage.toLowerCase();
+        boolean isDiscountQuery = lowerMsg.matches(DISCOUNT_PATTERN);
+        boolean isCouponQuery   = lowerMsg.matches(COUPON_PATTERN);
         List<VectorDocumentDTO> displayDocs = docs;
 
-        if (isDiscountQuery) {
-            // Lọc TOUR_DEPARTURE có bất kỳ loại giảm giá (coupon hoặc regular)
+        if (isCouponQuery) {
+            // Hỏi về coupon → lọc tour có couponDiscount > 0, sort theo couponDiscount DESC
+            List<VectorDocumentDTO> couponDocs = docs.stream()
+                    .filter(d -> "TOUR_DEPARTURE".equals(d.getType()))
+                    .filter(d -> {
+                        if (d.getMetadata() == null) return false;
+                        try {
+                            Map<?,?> m = gson.fromJson(d.getMetadata(), Map.class);
+                            double cd = m.containsKey("couponDiscount") ? ((Number) m.get("couponDiscount")).doubleValue() : 0;
+                            return cd > 0;
+                        } catch (Exception e) { return false; }
+                    })
+                    .sorted((d1, d2) -> {
+                        try {
+                            Object c1 = gson.fromJson(d1.getMetadata(), Map.class).get("couponDiscount");
+                            Object c2 = gson.fromJson(d2.getMetadata(), Map.class).get("couponDiscount");
+                            double v1 = c1 != null ? ((Number) c1).doubleValue() : 0;
+                            double v2 = c2 != null ? ((Number) c2).doubleValue() : 0;
+                            return Double.compare(v2, v1);
+                        } catch (Exception e) { return 0; }
+                    })
+                    .collect(Collectors.toList());
+
+            if (!couponDocs.isEmpty()) {
+                log.info("✅ Tìm thấy {} tour có mã coupon", couponDocs.size());
+                displayDocs = couponDocs;
+            } else {
+                log.warn("⚠️ Không tìm thấy tour nào có mã coupon");
+            }
+        } else if (isDiscountQuery) {
+            // Hỏi về giảm giá sâu → lọc TOUR_DEPARTURE có originalPrice > salePrice, sort theo (orig - sale) DESC
             List<VectorDocumentDTO> discountDocs = docs.stream()
                     .filter(d -> "TOUR_DEPARTURE".equals(d.getType()))
                     .filter(d -> {
                         if (d.getMetadata() == null) return false;
                         try {
                             Map<?,?> m = gson.fromJson(d.getMetadata(), Map.class);
-                            double couponDisc = m.containsKey("couponDiscount") ? ((Number) m.get("couponDiscount")).doubleValue() : 0;
                             double sale = m.containsKey("salePrice") ? ((Number) m.get("salePrice")).doubleValue() : 0;
                             double orig = m.containsKey("originalPrice") ? ((Number) m.get("originalPrice")).doubleValue() : 0;
-                            return couponDisc > 0 || (orig > 0 && sale > 0 && sale < orig);
+                            return orig > sale && sale > 0;
                         } catch (Exception e) { return false; }
                     })
                     .sorted((d1, d2) -> Double.compare(extractDiscountAmount(d2), extractDiscountAmount(d1)))
                     .collect(Collectors.toList());
 
             if (!discountDocs.isEmpty()) {
-                log.info("✅ Tìm thấy {} tour có giảm giá", discountDocs.size());
+                log.info("✅ Tìm thấy {} tour giảm giá sâu (theo originalPrice - salePrice)", discountDocs.size());
                 displayDocs = discountDocs;
             } else {
-                log.warn("⚠️ Không tìm thấy tour nào có giảm giá");
+                log.warn("⚠️ Không tìm thấy tour nào có originalPrice > salePrice");
             }
         }
 
         StringBuilder context = new StringBuilder("Dữ liệu từ hệ thống");
 
-        // Emit QUAN TRỌNG message for discount queries
-        if (isDiscountQuery && displayDocs != docs) {
-            long couponCount = displayDocs.stream().filter(d -> {
-                try {
-                    Map<?,?> m = gson.fromJson(d.getMetadata(), Map.class);
-                    return m.containsKey("couponDiscount") && ((Number) m.get("couponDiscount")).doubleValue() > 0;
-                } catch (Exception e) { return false; }
-            }).count();
-
-            if (couponCount > 0) {
-                context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(couponCount)
-                        .append(" tour có mã giảm giá coupon (sắp xếp theo mức giảm từ cao đến thấp)");
-            } else {
-                context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(displayDocs.size())
-                        .append(" tour đang có giảm giá (sắp xếp theo mức giảm từ cao đến thấp)");
-            }
+        // Emit QUAN TRỌNG header tùy theo loại query
+        if (isCouponQuery && displayDocs != docs) {
+            context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(displayDocs.size())
+                    .append(" tour đang có mã giảm giá coupon (sắp xếp theo mức coupon từ cao đến thấp)");
+        } else if (isDiscountQuery && displayDocs != docs) {
+            context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(displayDocs.size())
+                    .append(" tour đang được giảm giá (sắp xếp theo mức giảm sâu từ cao đến thấp, tính theo giá gốc trừ giá bán)");
         }
 
         context.append(":\n\n");
@@ -176,21 +206,26 @@ public class ChatbotService {
                             .append(", Ngày: ").append(deptDate)
                             .append(", Giá ADULT: ").append(String.format("%,.0f", salePrice)).append(" VND");
 
+                    // Hiển thị mức giảm giá thực tế (originalPrice - salePrice)
+                    if (origPrice > 0 && salePrice > 0 && origPrice > salePrice) {
+                        double priceDisc = origPrice - salePrice;
+                        double pct = (priceDisc / origPrice) * 100;
+                        context.append(", Giá gốc: ").append(String.format("%,.0f", origPrice)).append(" VND")
+                                .append(", GIẢM GIÁ: ").append(String.format("%,.0f", priceDisc))
+                                .append(" VND (").append(String.format("%.0f", pct)).append("%)");
+                        log.debug("📊 Tour {} giảm giá: {} VND ({}%)", tourName,
+                                String.format("%,.0f", priceDisc), String.format("%.0f", pct));
+                    }
+                    // Hiển thị coupon nếu có (độc lập, bổ sung thêm)
                     double couponDisc = toDouble(meta.get("couponDiscount"));
                     if (couponDisc > 0) {
-                        // Có mã giảm giá coupon
-                        context.append(", Giá gốc: ").append(String.format("%,.0f", origPrice)).append(" VND")
-                                .append(", 🎁 MÃ GIẢM GIÁ ĐẶC BIỆT: ").append(String.format("%,.0f", couponDisc)).append(" VND");
-                        String couponCode = getString(meta, "couponCode");
-                        if (!couponCode.isEmpty()) {
-                            context.append(" (Mã: ").append(couponCode).append(")");
+                        String couponCode    = getString(meta, "couponCode");
+                        String couponEndDate = getString(meta, "couponEndDate");
+                        context.append(", 🎁 MÃ COUPON: ").append(couponCode.isEmpty() ? "N/A" : couponCode)
+                                .append(" giảm thêm ").append(String.format("%,.0f", couponDisc)).append(" VND");
+                        if (!couponEndDate.isEmpty()) {
+                            context.append(" (HSD: ").append(couponEndDate).append(")");
                         }
-                        log.info("📊 Tour {} có coupon giảm giá: {} VND", tourName, String.format("%,.0f", couponDisc));
-                    } else if (origPrice > 0 && salePrice > 0 && salePrice < origPrice) {
-                        // Giảm giá thông thường (không coupon)
-                        double normalDisc = origPrice - salePrice;
-                        context.append(", Giá gốc: ").append(String.format("%,.0f", origPrice)).append(" VND")
-                                .append(", 🎁 MÃ GIẢM GIÁ ĐẶC BIỆT: ").append(String.format("%,.0f", normalDisc)).append(" VND");
                     }
 
                     context.append("]\n");
@@ -203,6 +238,24 @@ public class ChatbotService {
                                 .append(", LocationID: ").append(((Number) locationId).intValue())
                                 .append("]\n");
                     }
+                } else if ("COUPON".equals(doc.getType())) {
+                    String couponCode    = getString(meta, "couponCode");
+                    Object discountAmt   = meta.get("discountAmount");
+                    String couponType    = getString(meta, "couponType");
+                    String endDate       = getString(meta, "endDate");
+                    Object remaining     = meta.get("usageLimit");
+                    if (!couponCode.isEmpty()) {
+                        context.append("   [🎁 COUPON: ").append(couponCode);
+                        if (discountAmt != null)
+                            context.append(", Giảm: ").append(String.format("%,.0f", ((Number) discountAmt).doubleValue())).append(" VND");
+                        if ("GLOBAL".equals(couponType))
+                            context.append(", Áp dụng: tất cả tour");
+                        else
+                            context.append(", Áp dụng: lịch khởi hành cụ thể");
+                        if (!endDate.isEmpty())
+                            context.append(", HSD: ").append(endDate.length() > 10 ? endDate.substring(0, 10) : endDate);
+                        context.append("]\n");
+                    }
                 }
             } catch (Exception e) {
                 log.debug("Error parsing metadata for doc {}: {}", doc.getId(), e.getMessage());
@@ -213,14 +266,13 @@ public class ChatbotService {
         return context.toString();
     }
 
-    /** Tính tổng giá trị giảm giá của 1 TOUR_DEPARTURE doc */
+    /** Tính mức giảm giá theo originalPrice - salePrice (không tính coupon) */
     private double extractDiscountAmount(VectorDocumentDTO doc) {
         try {
             Map<?,?> m = gson.fromJson(doc.getMetadata(), Map.class);
-            double couponDisc = m.containsKey("couponDiscount") ? ((Number) m.get("couponDiscount")).doubleValue() : 0;
             double sale = m.containsKey("salePrice") ? ((Number) m.get("salePrice")).doubleValue() : 0;
             double orig = m.containsKey("originalPrice") ? ((Number) m.get("originalPrice")).doubleValue() : 0;
-            return couponDisc + Math.max(0, orig - sale);
+            return Math.max(0, orig - sale);
         } catch (Exception e) { return 0; }
     }
 
@@ -238,43 +290,40 @@ public class ChatbotService {
             🔹 NHIỆM VỤ PHÂN TÍCH DỮ LIỆU:
             1. **Giá:** Luôn dùng "Giá ADULT" (người lớn) làm chuẩn.
             
-            2. **⚠️ QUY TẮC BẮT BUỘC KHI NGƯỜI DÙNG HỎI VỀ GIẢM GIÁ/COUPON:**
+            2. **⚠️ QUY TẮC PHÂN BIỆT GIẢM GIÁ VÀ COUPON:**
+               
+               📌 HAI KHÁI NIỆM KHÁC NHAU:
+               - **GIẢM GIÁ** = "GIẢM GIÁ: X VND (Y%%)" trong context → chênh lệch giá gốc trừ giá bán
+               - **COUPON** = "🎁 MÃ COUPON: CODE giảm thêm X VND" → mã giảm giá bổ sung, dùng khi đặt
+               
+               🚨 KHI HỎI VỀ GIẢM GIÁ SÂU NHẤT / TOUR RẺ NHẤT:
+               - Sắp xếp tour theo cột "GIẢM GIÁ: X VND" từ cao đến thấp
+               - Hiển thị rõ: Giá bán, Giá gốc, Số tiền tiết kiệm, Phần trăm giảm
+               - BẮT BUỘC liệt kê đủ tất cả tour trong context
+               
+               🚨 KHI HỎI VỀ COUPON / MÃ GIẢM GIÁ:
+               - Chỉ giới thiệu tour có dòng "🎁 MÃ COUPON:" trong context
+               - Hiển thị rõ mã coupon code, số tiền giảm thêm, hạn sử dụng (HSD) nếu có
+               - KHÔNG được bỏ qua bất kỳ tour nào có coupon
                
                🚨 TUYỆT ĐỐI PHẢI TUÂN THỦ:
-               - Nếu Context có dòng "QUAN TRỌNG: Có CHÍNH XÁC X tour có mã giảm giá coupon"
-               - BẠN PHẢI GIỚI THIỆU **TẤT CẢ X TOUR ĐÓ**, KHÔNG ĐƯỢC BỎ QUA BẤT KỲ TOUR NÀO!
-               - KHÔNG ĐƯỢC chỉ giới thiệu 1 hoặc một vài tour, PHẢI GIỚI THIỆU HET!
+               - Nếu context có "QUAN TRỌNG: Có CHÍNH XÁC X tour..." → LIỆT KÊ ĐỦ X TOUR
+               - KHÔNG TỰ BỊA thêm tour không có trong context
+               - KHÔNG BỎ QUA tour có mức giảm thấp hơn
                
-               📋 CÁCH NHẬN DIỆN TOUR CÓ COUPON:
-               - Trong Context, tìm dòng có " MÃ GIẢM GIÁ ĐẶC BIỆT: X VND"
-               - Tour KHÔNG có dòng này thì BỎ QUA, không được đề cập
+               📝 FORMAT CHO MỖI TOUR:
+               **[Tên Tour]**
+               [Thời lượng] | [Ngày khởi hành]
+               💰 Giá bán: X VND | Giá gốc: Y VND | Tiết kiệm: Z VND (W%%)
+               🎁 Coupon: [MÃ] giảm thêm [số tiền] VND (HSD: ...) ← chỉ hiện nếu có coupon
+               **[Xem chi tiết](/tour/TOUR-CODE)**
                
-               📝 FORMAT BẮT BUỘC:
-               - Câu mở đầu: "Hiện tại có [SỐ LƯỢNG CHÍNH XÁC] tour đang có ưu đãi giảm giá đặc biệt:"
-               - Liệt kê TỪNG TOUR theo thứ tự từ cao đến thấp
-               - Mỗi tour PHẢI có đầy đủ: Tên, Thời lượng, Ngày, Giá gốc, Mã giảm giá, Link
-               
-               ✅ VÍ DỤ ĐÚNG (khi có 2 tour):
-               ```
-               Hiện tại có 2 tour đang có ưu đãi giảm giá đặc biệt:
-
-                **Tour Phú Quốc 3N2Đ**
-               3 Ngày 2 Đêm |  20/12/2025
-               💰 Giá: 8,000,000 VND |  Mã giảm giá: 1,000,000 VND
+               ✅ VÍ DỤ (tour vừa có giảm giá vừa có coupon):
+               **Tour Phú Quốc 3N2Đ**
+               3 Ngày 2 Đêm | 20/12/2025
+               💰 Giá bán: 7,000,000 VND | Giá gốc: 8,000,000 VND | Tiết kiệm: 1,000,000 VND (13%%)
+               🎁 Coupon: SUMMER2027 giảm thêm 300,000 VND (HSD: 2027-12-31)
                **[Xem chi tiết](/tour/TOUR-PQ-01)**
-
-                **Tour Hà Giang 3N2Đ**
-               3 Ngày 2 Đêm |  20/02/2026
-               💰 Giá: 6,100,000 VND |  Mã giảm giá: 100,000 VND
-               **[Xem chi tiết](/tour/TOUR-HG-04)**
-
-               Bạn có thể xem thêm các tour khác trên hệ thống.
-               ```
-               
-               ❌ SAI LẦM CẦN TRÁNH:
-               - ❌ Chỉ giới thiệu 1 tour khi Context có 2 tour
-               - ❌ Viết "có tour này" thay vì "có 2 tour"
-               - ❌ Bỏ qua tour có mức giảm thấp hơn
             
             3. **Đánh giá:** Chỉ đề xuất tour có Rating >= 4.0 sao nếu khách hỏi về chất lượng.
             4. **Thời gian:** Ưu tiên các ngày khởi hành gần nhất so với hiện tại. Tất cả tour đề xuất đều có ngày khởi hành trong tương lai.

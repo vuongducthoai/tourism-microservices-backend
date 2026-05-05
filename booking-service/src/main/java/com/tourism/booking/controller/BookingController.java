@@ -4,19 +4,48 @@ import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
 import com.tourism.booking.dto.response.BookingBriefResponse;
 import com.tourism.booking.dto.response.BookingResponse;
+import com.tourism.booking.dto.response.CouponChatbotSyncResponse;
+import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.service.BookingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/bookings")
 @RequiredArgsConstructor
 public class BookingController {
 
-    private final BookingService bookingService;
+    private final BookingService    bookingService;
+    private final CouponRepository  couponRepository;
+
+    /**
+     * GET /api/coupons/chatbot-sync
+     * Internal endpoint for analytics-service to fetch all active coupons for Pinecone sync.
+     */
+    @GetMapping("/coupons/chatbot-sync")
+    public ResponseEntity<List<CouponChatbotSyncResponse>> getCouponsForChatbotSync() {
+        List<CouponChatbotSyncResponse> result = couponRepository.findActiveCoupons(LocalDateTime.now())
+                .stream()
+                .map(c -> CouponChatbotSyncResponse.builder()
+                        .couponID(c.getCouponID())
+                        .couponCode(c.getCouponCode())
+                        .description(c.getDescription())
+                        .discountAmount(c.getDiscountAmount())
+                        .startDate(c.getStartDate() != null ? c.getStartDate().toString() : null)
+                        .endDate(c.getEndDate() != null ? c.getEndDate().toString() : null)
+                        .usageLimit(c.getUsageLimit())
+                        .usageCount(c.getUsageCount())
+                        .couponType(c.getCouponType() != null ? c.getCouponType().name() : "GLOBAL")
+                        .departureId(c.getDepartureId())
+                        .build())
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(result);
+    }
 
     /**
      * GET /api/bookings/{bookingID}

@@ -25,7 +25,7 @@ spring:
 # ─── Gemini AI ───
 gemini:
   api:
-    key: ${GEMINI_API_KEY:AIzaSyA8F9E9UK4dFGzWxlGN0u0Pk1IoQir0n7I}
+    key: ${GEMINI_API_KEY:AIzaSyBk-m9iJiVoIfT9x-2kgGWtd9JdxZVKIEg}
   generation:
     model: gemini-2.0-flash
     temperature: 0.7
@@ -57,3 +57,6 @@ management:
     web:
       exposure:
         include: health,info
+  health:
+    eureka:
+      enabled: false
