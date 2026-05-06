@@ -1,5 +1,7 @@
 package com.tourism.booking.controller;
 
+import com.tourism.booking.dto.request.AdminSearchBookingRequest;
+import com.tourism.booking.dto.request.AdminUpdateStatusRequest;
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
 import com.tourism.booking.dto.response.BookingBriefResponse;
@@ -8,6 +10,10 @@ import com.tourism.booking.dto.response.CouponChatbotSyncResponse;
 import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.service.BookingService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -73,8 +79,6 @@ public class BookingController {
     /**
      * GET /api/bookings/user/{userID}?bookingStatus=PAID
      * Returns bookings for a user, optionally filtered by status.
-     * bookingStatus values: PENDING_PAYMENT, OVERDUE_PAYMENT, PENDING_CONFIRMATION,
-     *                       PAID, CANCELLED, PENDING_REVIEW, REVIEWED, PENDING_REFUND
      */
     @GetMapping("/user/{userID}")
     public ResponseEntity<List<BookingResponse>> getBookingsByUser(
@@ -85,10 +89,7 @@ public class BookingController {
 
     /**
      * POST /api/bookings/cancel
-     * Cancel a booking. Body: { bookingID, cancelReason }
-     * Logic:
-     *  - PENDING_PAYMENT → CANCELLED (no fee, no money paid)
-     *  - PAID/PENDING_CONFIRMATION → calculates refund based on days to departure → PENDING_REFUND or CANCELLED
+     * Cancel a booking (customer-side, coin refund path).
      */
     @PostMapping("/cancel")
     public ResponseEntity<BookingResponse> cancelBooking(@RequestBody CancelBookingRequest request) {
@@ -97,13 +98,64 @@ public class BookingController {
 
     /**
      * POST /api/bookings/refund-request/{bookingID}
-     * Submit bank account info for refund. Body: { accountName, accountNumber, bank }
-     * Booking must be in PENDING_REFUND status.
+     * Submit bank account info for refund. Booking must be in PENDING_REFUND status.
      */
     @PostMapping("/refund-request/{bookingID}")
     public ResponseEntity<BookingResponse> submitRefundRequest(
             @PathVariable Integer bookingID,
             @RequestBody RefundInformationRequest request) {
         return ResponseEntity.ok(bookingService.submitRefundRequest(bookingID, request));
+    }
+
+    // ── ADMIN ENDPOINTS ───────────────────────────────────────────────────────
+
+    /**
+     * POST /api/bookings/admin/search
+     * Admin: search bookings with pagination and optional filters.
+     * Body: { bookingCode, bookingStatus, bookingDate }
+     * Params: page, size, sortBy, sortDir
+     *
+     * Mirrors monolith POST /api/bookings/admin/search
+     */
+    @PostMapping("/admin/search")
+    public ResponseEntity<Page<BookingResponse>> adminSearchBookings(
+            @RequestBody AdminSearchBookingRequest request,
+            @RequestParam(defaultValue = "0")             int    page,
+            @RequestParam(defaultValue = "10")            int    size,
+            @RequestParam(defaultValue = "bookingDate")   String sortBy,
+            @RequestParam(defaultValue = "DESC")          String sortDir) {
+
+        Sort sort = sortDir.equalsIgnoreCase("ASC")
+                ? Sort.by(sortBy).ascending()
+                : Sort.by(sortBy).descending();
+        Pageable pageable = PageRequest.of(page, size, sort);
+
+        return ResponseEntity.ok(bookingService.adminSearchBookings(request, pageable));
+    }
+
+    /**
+     * POST /api/bookings/admin/update-status
+     * Admin: update booking status with business-rule validation.
+     * Body: { bookingID, bookingStatus, cancelReason? }
+     *
+     * Supported transitions:
+     *  PENDING_CONFIRMATION → PAID
+     *  PENDING_PAYMENT      → CANCELLED (no refund)
+     *  PENDING_CONFIRMATION → CANCELLED (with refund)
+     *  PAID                 → CANCELLED (with refund)
+     *  PENDING_REFUND       → CANCELLED (with refund, after admin bank transfer)
+     *
+     * Mirrors monolith POST /api/bookings/admin/update-status
+     */
+    @PostMapping("/admin/update-status")
+    public ResponseEntity<?> adminUpdateBookingStatus(
+            @RequestBody AdminUpdateStatusRequest request) {
+        try {
+            BookingResponse updated = bookingService.adminUpdateBookingStatus(request);
+            return ResponseEntity.ok(updated);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(java.util.Map.of("message", e.getMessage()));
+        }
     }
 }

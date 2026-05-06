@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
  * REST endpoints consumed by booking-service (via Feign).
  * booking-service → POST /api/notifications/refund-requested
  * booking-service → POST /api/notifications/status-updated
+ * booking-service → POST /api/notifications/booking-confirmed
  */
 @RestController
 @RequestMapping("/api/notifications")
@@ -30,6 +31,16 @@ public class NotificationController {
     @PostMapping("/status-updated")
     public ResponseEntity<Void> statusUpdated(@RequestBody BookingEventDTO event) {
         notificationService.handleStatusUpdated(event);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Admin xác nhận booking (PENDING_CONFIRMATION → PAID).
+     * Gửi email xác nhận cho khách + WebSocket admin + WebSocket user.
+     */
+    @PostMapping("/booking-confirmed")
+    public ResponseEntity<Void> bookingConfirmed(@RequestBody BookingEventDTO event) {
+        notificationService.handleBookingConfirmed(event);
         return ResponseEntity.ok().build();
     }
 }

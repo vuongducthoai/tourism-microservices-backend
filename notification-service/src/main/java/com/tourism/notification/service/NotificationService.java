@@ -9,4 +9,10 @@ public interface NotificationService {
 
     /** Xử lý cập nhật trạng thái booking: email khách (nếu có) + WebSocket */
     void handleStatusUpdated(BookingEventDTO event);
+
+    /**
+     * Admin xác nhận booking (PENDING_CONFIRMATION → PAID).
+     * → Email xác nhận cho khách + WebSocket admin + WebSocket user
+     */
+    void handleBookingConfirmed(BookingEventDTO event);
 }

@@ -26,7 +26,7 @@ public class NotificationServiceImpl implements NotificationService {
         // 1. Email admin
         mailService.sendRefundRequestNotification(event);
 
-        // 2. Lưu notification vào DB
+        // 2. Lưu notification vào DB (admin)
         saveNotification(
                 null,
                 NotificationType.BOOKING_REFUND_REQUESTED,
@@ -35,8 +35,19 @@ public class NotificationServiceImpl implements NotificationService {
                         event.getBookingCode(), event.getContactFullName())
         );
 
-        // 3. WebSocket → admin
+        // 3. Lưu notification cho user
+        if (event.getUserId() != null) {
+            saveNotification(
+                    event.getUserId(),
+                    NotificationType.BOOKING_REFUND_REQUESTED,
+                    "Yêu cầu hoàn tiền đã gửi",
+                    String.format("Booking %s của bạn đang chờ hoàn tiền ngân hàng.", event.getBookingCode())
+            );
+        }
+
+        // 4. WebSocket → admin + user
         webSocketService.notifyAdminBookingUpdate(event);
+        webSocketService.notifyUserBookingUpdate(event.getUserId(), event);
     }
 
     @Override
@@ -83,6 +94,38 @@ public class NotificationServiceImpl implements NotificationService {
             notificationRepository.save(n);
         } catch (Exception e) {
             log.error("Failed to save notification: {}", e.getMessage());
+        }
+    }
+
+    @Override
+    public void handleBookingConfirmed(BookingEventDTO event) {
+        log.info("Handling booking-confirmed for booking: {} → PAID", event.getBookingCode());
+
+        // 1. Email xác nhận cho khách hàng
+        try {
+            mailService.sendPaymentConfirmationEmail(event);
+        } catch (Exception e) {
+            log.error("Failed to send confirmation email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+
+        // 2. WebSocket → admin dashboard (danh sách bookings refresh)
+        webSocketService.notifyAdminBookingUpdate(event);
+
+        // 3. WebSocket → user cụ thể (nếu có)
+        if (event.getUserId() != null) {
+            webSocketService.notifyUserBookingUpdate(event.getUserId(), event);
+        }
+
+        // 4. Lưu notification cho user
+        if (event.getUserId() != null) {
+            saveNotification(
+                    event.getUserId(),
+                    NotificationType.BOOKING_CONFIRMED,
+                    "Đặt tour thành công",
+                    String.format("Booking %s của bạn đã được xác nhận và thanh toán thành công.",
+                            event.getBookingCode())
+            );
         }
     }
 }

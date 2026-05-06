@@ -77,6 +77,17 @@ spring:
           filters:
             - StripPrefix=0
 
+        # ─── Notification Service — WebSocket (SockJS) ───
+        # MUST be declared separately with lb:ws:// scheme so Spring Cloud Gateway
+        # performs the HTTP→WebSocket upgrade and proxies STOMP frames.
+        # SockJS uses: GET /ws/info  +  /ws/{server}/{session}/{transport}
+        - id: notification-service-websocket
+          uri: lb:ws://notification-service
+          predicates:
+            - Path=/ws/**
+          filters:
+            - StripPrefix=0
+
         # ─── Analytics Service ───
         - id: analytics-service
           uri: lb://analytics-service

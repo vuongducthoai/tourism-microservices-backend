@@ -1,5 +1,7 @@
 package com.tourism.booking.service.impl;
 
+import com.tourism.booking.dto.request.AdminSearchBookingRequest;
+import com.tourism.booking.dto.request.AdminUpdateStatusRequest;
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
 import com.tourism.booking.dto.response.BookingBriefResponse;
@@ -15,10 +17,14 @@ import com.tourism.booking.feign.dto.DepartureInfoResponse;
 import com.tourism.booking.feign.dto.PaymentInfoResponse;
 import com.tourism.booking.repository.BookingRepository;
 import com.tourism.booking.repository.RefundInformationRepository;
+import com.tourism.booking.dto.sepay.TransactionVerificationDTO;
 import com.tourism.booking.service.BookingService;
+import com.tourism.booking.service.SepayService;
 import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +48,7 @@ public class BookingServiceImpl implements BookingService {
     private final IamFeignClient              iamClient;
     private final NotificationFeignClient     notificationClient;
     private final BookingConverter            bookingConverter;
+    private final SepayService               sepayService;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
 
@@ -309,5 +316,233 @@ public class BookingServiceImpl implements BookingService {
         }
 
         return res;
+    }
+
+    // ── ADMIN: paginated + filtered search ───────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<BookingResponse> adminSearchBookings(AdminSearchBookingRequest request, Pageable pageable) {
+        Page<Booking> page = bookingRepository.searchBookings(request, pageable);
+        return page.map(this::toResponse);
+    }
+
+    // ── ADMIN: update booking status with business rules ─────────────────────
+
+    @Override
+    @Transactional
+    public BookingResponse adminUpdateBookingStatus(AdminUpdateStatusRequest request) {
+        Booking booking = bookingRepository.findById(request.getBookingID())
+                .orElseThrow(() -> new RuntimeException(
+                        "Booking not found with ID: " + request.getBookingID()));
+
+        String newStatus     = request.getBookingStatus() != null
+                ? request.getBookingStatus().toUpperCase() : "";
+        String currentStatus = booking.getBookingStatus() != null
+                ? booking.getBookingStatus().name() : "";
+
+        switch (newStatus) {
+
+            // ── PENDING_CONFIRMATION → PAID ──────────────────────────────────
+            case "PAID": {
+                if (!"PENDING_CONFIRMATION".equals(currentStatus)) {
+                    throw new RuntimeException(
+                            "Chỉ có thể xác nhận booking ở trạng thái 'Chờ xác nhận'. " +
+                            "Trạng thái hiện tại: " + currentStatus);
+                }
+                booking.setBookingStatus(BookingStatus.PAID);
+                Booking saved = bookingRepository.save(booking);
+                BookingResponse res = toResponse(saved);
+
+                // Notify: email xác nhận + WebSocket
+                fireNotification(() -> notificationClient.notifyBookingConfirmed(
+                        buildEventFrom(saved, res, "PAID", null, null, null)));
+
+                log.info("Admin confirmed booking {} → PAID", booking.getBookingCode());
+                return res;
+            }
+
+            // ── * → CANCELLED ────────────────────────────────────────────────
+            case "CANCELLED": {
+                List<String> allowedStatuses = List.of(
+                        "PENDING_PAYMENT", "PENDING_CONFIRMATION", "PAID", "PENDING_REFUND");
+                if (!allowedStatuses.contains(currentStatus)) {
+                    throw new RuntimeException(
+                            "Không thể hủy booking ở trạng thái hiện tại: " + currentStatus);
+                }
+
+                // ── SePay verification: bắt buộc khi có hoàn tiền thực tế ──────────
+                // PENDING_REFUND: user đã submit TK ngân hàng → admin phải CK trước
+                // PAID / PENDING_CONFIRMATION: admin hủy trực tiếp → cũng phải CK đã CK tiền
+                boolean requiresSepayCheck = List.of("PENDING_REFUND", "PAID", "PENDING_CONFIRMATION")
+                        .contains(currentStatus);
+
+                if (requiresSepayCheck) {
+                    // Tính số tiền cần verify: admin cancel = full, không trừ phí
+                    BigDecimal totalPrice0 = booking.getTotalPrice() != null ? booking.getTotalPrice() : BigDecimal.ZERO;
+                    BigDecimal paidByCoin0 = booking.getPaidByCoin() != null ? booking.getPaidByCoin() : BigDecimal.ZERO;
+                    BigDecimal expectedAmount = totalPrice0.add(paidByCoin0);
+
+                    // Nếu PENDING_REFUND đã có refundAmount lưu sẵn thì dùng luôn
+                    if ("PENDING_REFUND".equals(currentStatus) && booking.getRefundAmount() != null
+                            && booking.getRefundAmount().compareTo(BigDecimal.ZERO) > 0) {
+                        expectedAmount = booking.getRefundAmount();
+                    }
+
+                    if (expectedAmount.compareTo(BigDecimal.ZERO) > 0) {
+                        RefundInformation refundInfo = booking.getRefundInformation();
+                        String accNumber = refundInfo != null ? refundInfo.getAccountNumber() : null;
+                        String accName   = refundInfo != null ? refundInfo.getAccountName()   : null;
+                        String bank      = refundInfo != null ? refundInfo.getBank()           : null;
+
+                        TransactionVerificationDTO verification = sepayService.verifyRefundTransaction(
+                                booking.getBookingCode(),
+                                expectedAmount,
+                                accNumber,
+                                accName,
+                                bank
+                        );
+
+                        if (!verification.isVerified()) {
+                            throw new RuntimeException(
+                                    "⚠️ Không tìm thấy giao dịch hoàn tiền trên SePay trong 24 giờ qua. " +
+                                    "Vui lòng chuyển khoản " + expectedAmount.toPlainString() + " VND với nội dung '" +
+                                    sepayService.generateTransferContent(booking.getBookingCode()) +
+                                    "' trước khi xác nhận hoàn tiền.");
+                        }
+
+                        // Nếu có RefundInformation → cập nhật trạng thái
+                        if (refundInfo != null) {
+                            refundInfo.setRefundStatus("COMPLETED");
+                            refundInfo.setRefundDate(LocalDateTime.now());
+                            refundInfo.setNote("Verified via SePay: ref=" + verification.getTransactionReference());
+                            refundRepository.save(refundInfo);
+                        }
+                        log.info("✅ SePay refund verified for booking {}, ref={}",
+                                booking.getBookingCode(), verification.getTransactionReference());
+                    }
+                }
+
+                booking.setBookingStatus(BookingStatus.CANCELLED);
+                booking.setCancelReason(request.getCancelReason());
+
+                // Calculate refund amount (full paid amount — no cancellation fee for admin path)
+                BigDecimal refundAmount = BigDecimal.ZERO;
+                boolean hasRefund = List.of("PENDING_CONFIRMATION", "PAID", "PENDING_REFUND")
+                        .contains(currentStatus);
+
+                if (hasRefund) {
+                    BigDecimal totalPrice = booking.getTotalPrice() != null
+                            ? booking.getTotalPrice() : BigDecimal.ZERO;
+                    BigDecimal paidByCoin = booking.getPaidByCoin() != null
+                            ? booking.getPaidByCoin() : BigDecimal.ZERO;
+                    refundAmount = totalPrice.add(paidByCoin);
+                    booking.setRefundAmount(refundAmount);
+                }
+
+                Booking saved = bookingRepository.save(booking);
+                BookingResponse res = toResponse(saved);
+
+                // Resolve refund account: prefer RefundInformation, fallback Payment
+                String refundBank   = null;
+                String refundAccNum = null;
+                String refundAccName = null;
+                if (saved.getRefundInformation() != null) {
+                    refundBank    = saved.getRefundInformation().getBank();
+                    refundAccNum  = saved.getRefundInformation().getAccountNumber();
+                    refundAccName = saved.getRefundInformation().getAccountName();
+                } else {
+                    refundBank    = res.getBank();
+                    refundAccNum  = res.getAccountNumber();
+                    refundAccName = res.getAccountName();
+                }
+
+                final BigDecimal finalRefund = refundAmount;
+                final String fBank = refundBank;
+                final String fAccNum = refundAccNum;
+                final String fAccName = refundAccName;
+
+                // Notify: email + WebSocket
+                fireNotification(() -> notificationClient.notifyStatusUpdated(
+                        buildEventFrom(saved, res, "CANCELLED",
+                                finalRefund, fBank, fAccNum, fAccName,
+                                request.getCancelReason())));
+
+                log.info("Admin cancelled booking {} (from {}), refund={}",
+                        booking.getBookingCode(), currentStatus, refundAmount);
+                return res;
+            }
+
+            default:
+                throw new RuntimeException("Trạng thái không hợp lệ: " + newStatus
+                        + ". Chỉ hỗ trợ: PAID, CANCELLED");
+        }
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /** Fire-and-forget notification — never let it fail the main transaction */
+    private void fireNotification(Runnable notifyCall) {
+        try {
+            notifyCall.run();
+        } catch (Exception e) {
+            log.error("Failed to send notification: {}", e.getMessage());
+        }
+    }
+
+    /** Build event for PAID confirmation */
+    private BookingEventDTO buildEventFrom(Booking booking, BookingResponse res,
+                                            String status,
+                                            BigDecimal refundAmount,
+                                            String refundBank,
+                                            String refundAccNum) {
+        return BookingEventDTO.builder()
+                .bookingID(booking.getBookingID())
+                .bookingCode(booking.getBookingCode())
+                .bookingStatus(status)
+                .contactFullName(booking.getContactFullName())
+                .contactEmail(booking.getContactEmail())
+                .contactPhone(booking.getContactPhone())
+                .contactAddress(booking.getContactAddress())
+                .totalPrice(booking.getTotalPrice())
+                .paidByCoin(booking.getPaidByCoin())
+                .refundAmount(refundAmount)
+                .refundBank(refundBank)
+                .refundAccountNumber(refundAccNum)
+                .userId(booking.getUserId())
+                .tourName(res.getTourName())
+                .tourCode(res.getTourCode())
+                .departureDate(res.getDepartureDate())
+                .build();
+    }
+
+    /** Build event for CANCELLED — includes cancelReason + refund account */
+    private BookingEventDTO buildEventFrom(Booking booking, BookingResponse res,
+                                            String status,
+                                            BigDecimal refundAmount,
+                                            String refundBank,
+                                            String refundAccNum,
+                                            String refundAccName,
+                                            String cancelReason) {
+        return BookingEventDTO.builder()
+                .bookingID(booking.getBookingID())
+                .bookingCode(booking.getBookingCode())
+                .bookingStatus(status)
+                .cancelReason(cancelReason)
+                .contactFullName(booking.getContactFullName())
+                .contactEmail(booking.getContactEmail())
+                .contactPhone(booking.getContactPhone())
+                .contactAddress(booking.getContactAddress())
+                .totalPrice(booking.getTotalPrice())
+                .paidByCoin(booking.getPaidByCoin())
+                .refundAmount(refundAmount)
+                .refundBank(refundBank)
+                .refundAccountNumber(refundAccNum)
+                .refundAccountName(refundAccName)
+                .userId(booking.getUserId())
+                .tourName(res.getTourName())
+                .tourCode(res.getTourCode())
+                .departureDate(res.getDepartureDate())
+                .build();
     }
 }

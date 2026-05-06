@@ -14,4 +14,10 @@ public interface MailService {
 
     /** Gửi email thông báo hủy tour cho admin (coin path) */
     void sendCancellationAdminNotification(BookingEventDTO event);
+
+    /**
+     * Gửi email xác nhận đặt tour thành công khi admin confirm (PAID).
+     * Được gọi bởi handleBookingConfirmed trong NotificationServiceImpl.
+     */
+    void sendPaymentConfirmationEmail(BookingEventDTO event);
 }

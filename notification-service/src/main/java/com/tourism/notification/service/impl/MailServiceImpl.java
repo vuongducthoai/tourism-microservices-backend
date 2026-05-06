@@ -204,4 +204,58 @@ public class MailServiceImpl implements MailService {
     private String nvl(String s) {
         return s != null ? s : "N/A";
     }
+
+    // ── Gửi email xác nhận đặt tour thành công cho khách hàng ──────────────────
+    @Async
+    @Override
+    public void sendPaymentConfirmationEmail(BookingEventDTO event) {
+        if (event.getContactEmail() == null || event.getContactEmail().isBlank()) {
+            log.warn("sendPaymentConfirmationEmail: no customer email for booking {}",
+                    event.getBookingCode());
+            return;
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getContactEmail());
+            msg.setSubject("ĐẶT TOUR THÀNH CÔNG: " + nvl(event.getBookingCode()));
+
+            BigDecimal total     = event.getTotalPrice()  != null ? event.getTotalPrice()  : BigDecimal.ZERO;
+            BigDecimal coinPaid  = event.getPaidByCoin()  != null ? event.getPaidByCoin()  : BigDecimal.ZERO;
+
+            String body = String.format(
+                "Xin chào %s,\n\n" +
+                "Đặt tour của bạn đã được xác nhận thành công!\n" +
+                "Dưới đây là thông tin chi tiết:\n\n" +
+                "--- THÔNG TIN ĐẶT TOUR ---\n" +
+                "Mã Booking  : %s\n" +
+                "Tour        : %s\n" +
+                "Mã Tour     : %s\n" +
+                "Ngày khởi hành: %s\n" +
+                "Trạng thái  : ĐÃ THANH TOÁN\n\n" +
+                "--- THANH TOÁN ---\n" +
+                "Tổng tiền tour  : %s\n" +
+                "Thanh toán bằng coin: %s\n\n" +
+                "Cảm ơn bạn đã tin tưởng và đặt tour của chúng tôi.\n" +
+                "Nếu có thắc mắc, vui lòng liên hệ: %s\n\n" +
+                "Chúc bạn có chuyến đi thật tuyệt vời!\n",
+                nvl(event.getContactFullName()),
+                nvl(event.getBookingCode()),
+                nvl(event.getTourName()),
+                nvl(event.getTourCode()),
+                event.getDepartureDate() != null ? event.getDepartureDate().toString() : "N/A",
+                VND_FMT.format(total),
+                VND_FMT.format(coinPaid),
+                adminEmail
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Payment confirmation email sent to {} for booking {}",
+                    event.getContactEmail(), event.getBookingCode());
+        } catch (Exception e) {
+            log.error("Failed to send payment confirmation email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+    }
 }
