@@ -51,6 +51,14 @@ management:
     web:
       exposure:
         include: health,info
+  # Disable health indicators that cause false DOWN status in Eureka:
+  # - MailHealthIndicator: SMTP connection to Gmail times out (96s) in Docker
+  # - RedisHealthIndicator: can be slow to respond in some network conditions
+  health:
+    mail:
+      enabled: false
+    redis:
+      enabled: false
 
 app:
   admin:

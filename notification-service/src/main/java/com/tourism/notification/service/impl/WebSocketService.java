@@ -1,6 +1,7 @@
 package com.tourism.notification.service.impl;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.UserStatusEventDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
  * Pushes booking event updates to:
  *   /topic/admin/bookings           — tất cả admin đang online
  *   /topic/user/{userId}/bookings   — user cụ thể
+ *   /topic/admin/users              — admin user management page
  */
 @Slf4j
 @Service
@@ -38,6 +40,20 @@ public class WebSocketService {
         } catch (Exception e) {
             log.error("WebSocket user push failed for userId={}, booking {}: {}",
                     userId, event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * Notify admin user management page when a user is locked/unlocked.
+     * Mirrors monolith WebSocketService.notifyUserUpdate().
+     * Frontend subscribes to /topic/admin/users → refetch() danh sách.
+     */
+    public void notifyAdminUserUpdate(UserStatusEventDTO event) {
+        try {
+            messagingTemplate.convertAndSend("/topic/admin/users", event);
+            log.info("WebSocket pushed to /topic/admin/users for userId={}", event.getUserID());
+        } catch (Exception e) {
+            log.error("WebSocket push failed for /topic/admin/users userId={}: {}", event.getUserID(), e.getMessage());
         }
     }
 }

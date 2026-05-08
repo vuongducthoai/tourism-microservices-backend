@@ -20,4 +20,11 @@ public interface NotificationFeignClient {
     /** Booking bị hủy (coin path) → email khách + WebSocket */
     @PostMapping("/api/notifications/status-updated")
     void notifyStatusUpdated(@RequestBody BookingEventDTO event);
+
+    /**
+     * Admin xác nhận booking (PENDING_CONFIRMATION → PAID).
+     * → Email xác nhận cho khách + WebSocket admin + WebSocket user
+     */
+    @PostMapping("/api/notifications/booking-confirmed")
+    void notifyBookingConfirmed(@RequestBody BookingEventDTO event);
 }
