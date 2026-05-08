@@ -1,9 +1,15 @@
 package com.tourism.iam.controller;
 
+import com.tourism.iam.dto.request.UserSearchRequest;
+import com.tourism.iam.dto.request.UserStatusUpdateRequest;
 import com.tourism.iam.dto.request.UserUpdateRequest;
+import com.tourism.iam.dto.response.UserAdminResponse;
 import com.tourism.iam.dto.response.UserDetailResponse;
 import com.tourism.iam.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,7 +28,6 @@ public class UserController {
     /**
      * GET /api/users/{userID}
      * Returns full profile of a user by ID.
-     * Response: UserDetailResponse {userID, fullName, phone, dateOfBirth, email, coinBalance, avatar, status, role}
      */
     @GetMapping("/{userID}")
     public ResponseEntity<UserDetailResponse> getUserById(@PathVariable Integer userID) {
@@ -32,7 +37,6 @@ public class UserController {
     /**
      * PUT /api/users/{userID}
      * Update user profile. Accepts multipart/form-data.
-     * Fields: fullName (text), phone (text), dateOfBirth (text, yyyy-MM-dd), avatar (file, optional)
      */
     @PutMapping(value = "/{userID}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<UserDetailResponse> updateUser(
@@ -52,8 +56,7 @@ public class UserController {
 
     /**
      * POST /api/users/{userID}/coins?amount=X
-     * Add coins to user's balance. Called internally by booking-service via Feign after coin-refund cancellation.
-     * NOTE: Using POST instead of PATCH because Java HttpURLConnection (Feign default) does not support PATCH.
+     * Add coins to user's balance. Called by booking-service via Feign.
      */
     @PostMapping("/{userID}/coins")
     public ResponseEntity<Void> addCoins(
@@ -62,5 +65,34 @@ public class UserController {
     ) {
         userService.addCoins(userID, amount);
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * POST /api/users/admin/search?page=0&size=6
+     * Search users by fullName / phone / email.
+     * Returns CUSTOMER accounts only, sorted Online → Away → Offline.
+     * Body: { fullName, phone, email } (all nullable)
+     */
+    @PostMapping("/admin/search")
+    public ResponseEntity<Page<UserAdminResponse>> searchUsers(
+            @RequestBody UserSearchRequest searchDTO,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "6") int size
+    ) {
+        Pageable pageable = PageRequest.of(page, size);
+        return ResponseEntity.ok(userService.searchUsers(searchDTO, pageable));
+    }
+
+    /**
+     * POST /api/users/admin/update-status
+     * Lock or unlock a user account.
+     * Body: { userID, status (true=active/false=locked), reason }
+     * Side effects: email notification + WebSocket push to /topic/admin/users
+     */
+    @PostMapping("/admin/update-status")
+    public ResponseEntity<UserAdminResponse> updateUserStatus(
+            @RequestBody UserStatusUpdateRequest requestDTO
+    ) {
+        return ResponseEntity.ok(userService.updateUserStatus(requestDTO));
     }
 }

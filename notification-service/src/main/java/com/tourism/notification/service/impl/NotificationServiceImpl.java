@@ -1,6 +1,7 @@
 package com.tourism.notification.service.impl;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.UserStatusEventDTO;
 import com.tourism.notification.entity.Notification;
 import com.tourism.notification.entity.NotificationType;
 import com.tourism.notification.repository.NotificationRepository;
@@ -127,5 +128,17 @@ public class NotificationServiceImpl implements NotificationService {
                             event.getBookingCode())
             );
         }
+    }
+
+    /**
+     * Admin khóa / mở khóa tài khoản user.
+     * 1. Gửi email thông báo cho người dùng (async, lỗi không ảnh hưởng response).
+     * 2. Push WebSocket tới /topic/admin/users để admin page tự refresh.
+     */
+    @Override
+    public void handleUserStatusUpdated(UserStatusEventDTO event) {
+        log.info("Handling user-status-updated for userId={}, status={}", event.getUserID(), event.getStatus());
+        mailService.sendAccountStatusEmail(event);
+        webSocketService.notifyAdminUserUpdate(event);
     }
 }

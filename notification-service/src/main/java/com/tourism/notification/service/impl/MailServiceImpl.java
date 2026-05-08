@@ -1,6 +1,7 @@
 package com.tourism.notification.service.impl;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.UserStatusEventDTO;
 import com.tourism.notification.service.MailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -256,6 +257,56 @@ public class MailServiceImpl implements MailService {
         } catch (Exception e) {
             log.error("Failed to send payment confirmation email for booking {}: {}",
                     event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    // ── Gửi email thông báo khóa / mở khóa tài khoản cho người dùng ──────────
+    @Async
+    @Override
+    public void sendAccountStatusEmail(UserStatusEventDTO event) {
+        if (event.getEmail() == null || event.getEmail().isBlank()) {
+            log.warn("sendAccountStatusEmail: no email for userId={}", event.getUserID());
+            return;
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getEmail());
+
+            boolean locked = Boolean.FALSE.equals(event.getStatus());
+            String action  = locked ? "KHÓA" : "MỞ KHÓA";
+            msg.setSubject("THÔNG BÁO " + action + " TÀI KHOẢN - FUTURE TRAVEL");
+
+            String content = String.format(
+                    "Xin chào %s,\n\n" +
+                    "Tài khoản của bạn đã được %s.\n\n" +
+                    "--- THÔNG TIN TÀI KHOẢN ---\n" +
+                    "Họ tên: %s\n" +
+                    "Email: %s\n" +
+                    "Số điện thoại: %s\n" +
+                    "Ngày sinh: %s\n\n" +
+                    "--- LÝ DO ---\n%s\n\n" +
+                    "Nếu có bất kỳ thắc mắc nào, vui lòng liên hệ:\n" +
+                    "Email: %s\n" +
+                    "Điện thoại: 0339263066\n\n" +
+                    "Trân trọng,\nFuture Travel Team",
+                    nvl(event.getFullName()),
+                    locked ? "tạm khóa" : "mở khóa hoạt động trở lại",
+                    nvl(event.getFullName()),
+                    nvl(event.getEmail()),
+                    nvl(event.getPhone()),
+                    event.getDateOfBirth() != null ? event.getDateOfBirth().toString() : "N/A",
+                    nvl(event.getReason()),
+                    adminEmail
+            );
+
+            msg.setText(content);
+            mailSender.send(msg);
+            log.info("Account status ({}) email sent to userId={} <{}>",
+                    action, event.getUserID(), event.getEmail());
+        } catch (Exception e) {
+            log.error("Failed to send account status email to userId={}: {}",
+                    event.getUserID(), e.getMessage());
         }
     }
 }

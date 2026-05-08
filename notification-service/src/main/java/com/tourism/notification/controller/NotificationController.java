@@ -1,6 +1,7 @@
 package com.tourism.notification.controller;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.UserStatusEventDTO;
 import com.tourism.notification.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -10,10 +11,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST endpoints consumed by booking-service (via Feign).
+ * REST endpoints consumed by other services (via Feign).
  * booking-service → POST /api/notifications/refund-requested
  * booking-service → POST /api/notifications/status-updated
  * booking-service → POST /api/notifications/booking-confirmed
+ * iam-service     → POST /api/notifications/user-status-updated
  */
 @RestController
 @RequestMapping("/api/notifications")
@@ -36,11 +38,20 @@ public class NotificationController {
 
     /**
      * Admin xác nhận booking (PENDING_CONFIRMATION → PAID).
-     * Gửi email xác nhận cho khách + WebSocket admin + WebSocket user.
      */
     @PostMapping("/booking-confirmed")
     public ResponseEntity<Void> bookingConfirmed(@RequestBody BookingEventDTO event) {
         notificationService.handleBookingConfirmed(event);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Admin khóa / mở khóa tài khoản user.
+     * iam-service calls this → push WebSocket to /topic/admin/users.
+     */
+    @PostMapping("/user-status-updated")
+    public ResponseEntity<Void> userStatusUpdated(@RequestBody UserStatusEventDTO event) {
+        notificationService.handleUserStatusUpdated(event);
         return ResponseEntity.ok().build();
     }
 }

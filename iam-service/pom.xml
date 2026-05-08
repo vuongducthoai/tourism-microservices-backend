@@ -123,6 +123,12 @@
             <version>3.2.0</version>
         </dependency>
 
+        <!-- OpenFeign (call notification-service for WS push) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
         <!-- Actuator -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
