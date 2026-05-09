@@ -1,4 +1,4 @@
-package com.tourism.analytics.config;
+package com.tourism.tourcatalog.config;
 
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
@@ -6,30 +6,24 @@ import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 
 @Configuration
-public class ChatbotConfig {
+public class OpenApiConfig {
 
     @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
-    }
-
-    @Bean
-    public OpenAPI analyticsServiceOpenAPI() {
+    public OpenAPI tourCatalogOpenAPI() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("Analytics Service API")
-                        .description("Dashboard thống kê và AI Chatbot — RAG pipeline với Gemini 2.0 Flash + Pinecone")
+                        .title("Tour Catalog Service API")
+                        .description("Quản lý tour du lịch, điểm đến, lịch khởi hành, đánh giá và tour yêu thích")
                         .version("1.0.0")
                         .contact(new Contact()
                                 .name("Future Travel")
                                 .email("support@futuretravel.vn")))
                 .servers(List.of(
                         new Server().url("http://localhost:8080").description("API Gateway"),
-                        new Server().url("http://localhost:8087").description("Direct")));
+                        new Server().url("http://localhost:8082").description("Direct")));
     }
 }

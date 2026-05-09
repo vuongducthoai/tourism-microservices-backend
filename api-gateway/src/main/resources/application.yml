@@ -96,10 +96,81 @@ spring:
           filters:
             - StripPrefix=0
 
+        # OpenAPI docs for Swagger UI aggregation
+        - id: iam-service-openapi
+          uri: lb://iam-service
+          predicates:
+            - Path=/v3/api-docs/iam-service
+          filters:
+            - RewritePath=/v3/api-docs/iam-service, /v3/api-docs
+
+        - id: tour-catalog-service-openapi
+          uri: lb://tour-catalog-service
+          predicates:
+            - Path=/v3/api-docs/tour-catalog-service
+          filters:
+            - RewritePath=/v3/api-docs/tour-catalog-service, /v3/api-docs
+
+        - id: booking-service-openapi
+          uri: lb://booking-service
+          predicates:
+            - Path=/v3/api-docs/booking-service
+          filters:
+            - RewritePath=/v3/api-docs/booking-service, /v3/api-docs
+
+        - id: payment-service-openapi
+          uri: lb://payment-service
+          predicates:
+            - Path=/v3/api-docs/payment-service
+          filters:
+            - RewritePath=/v3/api-docs/payment-service, /v3/api-docs
+
+        - id: forum-service-openapi
+          uri: lb://forum-service
+          predicates:
+            - Path=/v3/api-docs/forum-service
+          filters:
+            - RewritePath=/v3/api-docs/forum-service, /v3/api-docs
+
+        - id: notification-service-openapi
+          uri: lb://notification-service
+          predicates:
+            - Path=/v3/api-docs/notification-service
+          filters:
+            - RewritePath=/v3/api-docs/notification-service, /v3/api-docs
+
+        - id: analytics-service-openapi
+          uri: lb://analytics-service
+          predicates:
+            - Path=/v3/api-docs/analytics-service
+          filters:
+            - RewritePath=/v3/api-docs/analytics-service, /v3/api-docs
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    disable-swagger-default-url: true
+    urls-primary-name: IAM Service
+    urls:
+      - name: IAM Service
+        url: /v3/api-docs/iam-service
+      - name: Tour Catalog Service
+        url: /v3/api-docs/tour-catalog-service
+      - name: Booking Service
+        url: /v3/api-docs/booking-service
+      - name: Payment Service
+        url: /v3/api-docs/payment-service
+      - name: Forum Service
+        url: /v3/api-docs/forum-service
+      - name: Notification Service
+        url: /v3/api-docs/notification-service
+      - name: Analytics Service
+        url: /v3/api-docs/analytics-service
 
 eureka:
   client:

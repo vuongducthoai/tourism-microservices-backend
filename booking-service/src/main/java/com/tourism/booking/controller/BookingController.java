@@ -9,6 +9,10 @@ import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.dto.response.CouponChatbotSyncResponse;
 import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.service.BookingService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -24,15 +28,14 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/bookings")
 @RequiredArgsConstructor
+@Tag(name = "Bookings", description = "Dat tour, huy booking, hoan tien va coupon giam gia")
 public class BookingController {
 
     private final BookingService    bookingService;
     private final CouponRepository  couponRepository;
 
-    /**
-     * GET /api/coupons/chatbot-sync
-     * Internal endpoint for analytics-service to fetch all active coupons for Pinecone sync.
-     */
+    @Operation(summary = "[Internal] Chatbot sync coupons", description = "Endpoint noi bo - analytics-service lay coupon active cho Pinecone")
+    @ApiResponse(responseCode = "200", description = "Danh sach coupon active")
     @GetMapping("/coupons/chatbot-sync")
     public ResponseEntity<List<CouponChatbotSyncResponse>> getCouponsForChatbotSync() {
         List<CouponChatbotSyncResponse> result = couponRepository.findActiveCoupons(LocalDateTime.now())
@@ -53,21 +56,18 @@ public class BookingController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * GET /api/bookings/{bookingID}
-     * Internal endpoint: returns lightweight booking info (userId, status) for Feign callers.
-     * Used by tour-catalog-service after review submission.
-     */
+    @Operation(summary = "[Internal] Lay thong tin booking theo ID", description = "Endpoint noi bo - tour-catalog-service goi sau khi review duoc gui")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Thong tin booking"),
+            @ApiResponse(responseCode = "404", description = "Khong tim thay")
+    })
     @GetMapping("/{bookingID}")
     public ResponseEntity<BookingBriefResponse> getBookingById(@PathVariable Integer bookingID) {
         return ResponseEntity.ok(bookingService.getBookingById(bookingID));
     }
 
-    /**
-     * POST /api/bookings/{bookingID}/status?status=REVIEWED
-     * Internal endpoint: update booking status. Called by tour-catalog-service after review submitted.
-     * NOTE: Using POST (not PATCH) because Java HttpURLConnection used by Feign does not support PATCH.
-     */
+    @Operation(summary = "[Internal] Cap nhat trang thai booking", description = "Goi noi bo - tour-catalog-service cap nhat status sau khi nhan review")
+    @ApiResponse(responseCode = "200", description = "Cap nhat thanh cong")
     @PostMapping("/{bookingID}/status")
     public ResponseEntity<Void> updateBookingStatus(
             @PathVariable Integer bookingID,
@@ -76,10 +76,8 @@ public class BookingController {
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * GET /api/bookings/user/{userID}?bookingStatus=PAID
-     * Returns bookings for a user, optionally filtered by status.
-     */
+    @Operation(summary = "Danh sach booking cua user", description = "Lay booking theo userID, co the loc theo bookingStatus")
+    @ApiResponse(responseCode = "200", description = "Danh sach booking")
     @GetMapping("/user/{userID}")
     public ResponseEntity<List<BookingResponse>> getBookingsByUser(
             @PathVariable Integer userID,
@@ -87,19 +85,21 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.getBookingsByUser(userID, bookingStatus));
     }
 
-    /**
-     * POST /api/bookings/cancel
-     * Cancel a booking (customer-side, coin refund path).
-     */
+    @Operation(summary = "Huy booking (phia khach hang)", description = "Huy booking - neu du dieu kien, coin se duoc hoan ve vi")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Huy thanh cong"),
+            @ApiResponse(responseCode = "400", description = "Khong the huy")
+    })
     @PostMapping("/cancel")
     public ResponseEntity<BookingResponse> cancelBooking(@RequestBody CancelBookingRequest request) {
         return ResponseEntity.ok(bookingService.cancelBooking(request));
     }
 
-    /**
-     * POST /api/bookings/refund-request/{bookingID}
-     * Submit bank account info for refund. Booking must be in PENDING_REFUND status.
-     */
+    @Operation(summary = "Yeu cau hoan tien", description = "Gui thong tin tai khoan ngan hang de hoan tien. Booking phai o trang thai PENDING_REFUND")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Yeu cau da duoc ghi nhan"),
+            @ApiResponse(responseCode = "400", description = "Trang thai booking khong hop le")
+    })
     @PostMapping("/refund-request/{bookingID}")
     public ResponseEntity<BookingResponse> submitRefundRequest(
             @PathVariable Integer bookingID,
@@ -107,16 +107,8 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.submitRefundRequest(bookingID, request));
     }
 
-    // ── ADMIN ENDPOINTS ───────────────────────────────────────────────────────
-
-    /**
-     * POST /api/bookings/admin/search
-     * Admin: search bookings with pagination and optional filters.
-     * Body: { bookingCode, bookingStatus, bookingDate }
-     * Params: page, size, sortBy, sortDir
-     *
-     * Mirrors monolith POST /api/bookings/admin/search
-     */
+    @Operation(summary = "[Admin] Tim kiem booking", description = "Tim theo bookingCode, bookingStatus, bookingDate voi phan trang va sap xep")
+    @ApiResponse(responseCode = "200", description = "Ket qua tim kiem phan trang")
     @PostMapping("/admin/search")
     public ResponseEntity<Page<BookingResponse>> adminSearchBookings(
             @RequestBody AdminSearchBookingRequest request,
@@ -133,20 +125,11 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.adminSearchBookings(request, pageable));
     }
 
-    /**
-     * POST /api/bookings/admin/update-status
-     * Admin: update booking status with business-rule validation.
-     * Body: { bookingID, bookingStatus, cancelReason? }
-     *
-     * Supported transitions:
-     *  PENDING_CONFIRMATION → PAID
-     *  PENDING_PAYMENT      → CANCELLED (no refund)
-     *  PENDING_CONFIRMATION → CANCELLED (with refund)
-     *  PAID                 → CANCELLED (with refund)
-     *  PENDING_REFUND       → CANCELLED (with refund, after admin bank transfer)
-     *
-     * Mirrors monolith POST /api/bookings/admin/update-status
-     */
+    @Operation(summary = "[Admin] Cap nhat trang thai booking", description = "Ho tro chuyen: PENDING_CONFIRMATION->PAID, *->CANCELLED (co/khong hoan tien)")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Cap nhat thanh cong"),
+            @ApiResponse(responseCode = "400", description = "Chuyen trang thai khong hop le")
+    })
     @PostMapping("/admin/update-status")
     public ResponseEntity<?> adminUpdateBookingStatus(
             @RequestBody AdminUpdateStatusRequest request) {
