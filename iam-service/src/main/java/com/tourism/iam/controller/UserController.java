@@ -6,6 +6,11 @@ import com.tourism.iam.dto.request.UserUpdateRequest;
 import com.tourism.iam.dto.response.UserAdminResponse;
 import com.tourism.iam.dto.response.UserDetailResponse;
 import com.tourism.iam.service.UserService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -21,23 +26,26 @@ import java.math.BigDecimal;
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
+@Tag(name = "Users", description = "Quản lý người dùng — profile, ảnh đại diện, coin và admin user management")
 public class UserController {
 
     private final UserService userService;
 
-    /**
-     * GET /api/users/{userID}
-     * Returns full profile of a user by ID.
-     */
+    @Operation(summary = "Lấy thông tin người dùng theo ID", description = "Trả về đầy đủ profile: tên, email, phone, ngày sinh, avatar, số dư coin, role")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Thành công"),
+            @ApiResponse(responseCode = "404", description = "Không tìm thấy user")
+    })
     @GetMapping("/{userID}")
     public ResponseEntity<UserDetailResponse> getUserById(@PathVariable Integer userID) {
         return ResponseEntity.ok(userService.getUserById(userID));
     }
 
-    /**
-     * PUT /api/users/{userID}
-     * Update user profile. Accepts multipart/form-data.
-     */
+    @Operation(summary = "Cập nhật profile người dùng", description = "Chấp nhận multipart/form-data. Có thể cập nhật: fullName, phone, dateOfBirth, avatar (file ảnh)")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Cập nhật thành công"),
+            @ApiResponse(responseCode = "404", description = "Không tìm thấy user")
+    })
     @PutMapping(value = "/{userID}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<UserDetailResponse> updateUser(
             @PathVariable Integer userID,
@@ -54,10 +62,8 @@ public class UserController {
         return ResponseEntity.ok(userService.updateUser(userID, request, avatar));
     }
 
-    /**
-     * POST /api/users/{userID}/coins?amount=X
-     * Add coins to user's balance. Called by booking-service via Feign.
-     */
+    @Operation(summary = "[Internal] Cộng coin cho người dùng", description = "Endpoint nội bộ — booking-service gọi qua Feign sau khi booking hoàn thành")
+    @ApiResponse(responseCode = "200", description = "Cộng coin thành công")
     @PostMapping("/{userID}/coins")
     public ResponseEntity<Void> addCoins(
             @PathVariable Integer userID,
@@ -67,12 +73,10 @@ public class UserController {
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * POST /api/users/admin/search?page=0&size=6
-     * Search users by fullName / phone / email.
-     * Returns CUSTOMER accounts only, sorted Online → Away → Offline.
-     * Body: { fullName, phone, email } (all nullable)
-     */
+    @Operation(summary = "[Admin] Tìm kiếm người dùng", description = "Tìm kiếm CUSTOMER theo fullName / phone / email với phân trang. Kết quả sắp xếp: Online → Away → Offline")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Danh sách user phân trang")
+    })
     @PostMapping("/admin/search")
     public ResponseEntity<Page<UserAdminResponse>> searchUsers(
             @RequestBody UserSearchRequest searchDTO,
@@ -83,12 +87,11 @@ public class UserController {
         return ResponseEntity.ok(userService.searchUsers(searchDTO, pageable));
     }
 
-    /**
-     * POST /api/users/admin/update-status
-     * Lock or unlock a user account.
-     * Body: { userID, status (true=active/false=locked), reason }
-     * Side effects: email notification + WebSocket push to /topic/admin/users
-     */
+    @Operation(summary = "[Admin] Khoá / mở khoá tài khoản", description = "Thay đổi trạng thái tài khoản. Side effects: gửi email thông báo + push WebSocket đến /topic/admin/users")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Cập nhật thành công"),
+            @ApiResponse(responseCode = "404", description = "Không tìm thấy user")
+    })
     @PostMapping("/admin/update-status")
     public ResponseEntity<UserAdminResponse> updateUserStatus(
             @RequestBody UserStatusUpdateRequest requestDTO

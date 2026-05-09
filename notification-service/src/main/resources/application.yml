@@ -63,3 +63,9 @@ management:
 app:
   admin:
     email: ${ADMIN_EMAIL:22110431@student.hcmute.edu.vn}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

@@ -58,3 +58,9 @@ sepay:
   account-number: "10002897094"
   account-name: TRAN ANH THU
   bank-code: BIDV
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

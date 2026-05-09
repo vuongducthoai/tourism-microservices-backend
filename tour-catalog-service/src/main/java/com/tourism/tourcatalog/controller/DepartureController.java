@@ -3,25 +3,27 @@ package com.tourism.tourcatalog.controller;
 import com.tourism.tourcatalog.dto.response.DepartureInfoResponse;
 import com.tourism.tourcatalog.entity.TourDeparture;
 import com.tourism.tourcatalog.repository.TourDepartureRepository;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Internal endpoint — used by booking-service via Feign to resolve departure info.
- */
 @RestController
 @RequestMapping("/api/departures")
 @RequiredArgsConstructor
+@Tag(name = "Departures", description = "[Internal] Lịch khởi hành — booking-service truy vấn thông tin chuyến đi qua Feign")
 public class DepartureController {
 
     private final TourDepartureRepository tourDepartureRepository;
 
-    /**
-     * GET /api/departures/{departureId}
-     * Returns tour + departure info for a given departure ID.
-     * Called internally by booking-service.
-     */
+    @Operation(summary = "[Internal] Lấy thông tin departure", description = "Trả về tour + departure info theo departureId — dung nội bộ")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Thông tin departure"),
+            @ApiResponse(responseCode = "404", description = "Không tìm thấy departure")
+    })
     @GetMapping("/{departureId}")
     public ResponseEntity<DepartureInfoResponse> getDepartureInfo(@PathVariable Integer departureId) {
         TourDeparture dep = tourDepartureRepository.findById(departureId)
