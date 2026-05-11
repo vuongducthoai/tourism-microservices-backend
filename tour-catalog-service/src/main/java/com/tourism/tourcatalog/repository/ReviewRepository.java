@@ -27,8 +27,7 @@ public interface ReviewRepository extends JpaRepository<Review, Integer> {
                         "WHERE r.tour.tourCode = :tourCode AND r.isVisible = true")
     Page<Review> findByTourCodeAndVisible(@Param("tourCode") String tourCode, Pageable pageable);
 
-    @Query("SELECT AVG(r.rating) FROM Review r " +
-           "WHERE r.tour.tourCode = :tourCode AND r.isVisible = true")
+    @Query("SELECT AVG(r.rating) FROM Review r WHERE r.tour.tourCode = :tourCode AND r.isVisible = true")
     Double getAverageRatingByTourCode(@Param("tourCode") String tourCode);
 
     @Query("SELECT COUNT(r) FROM Review r " +
@@ -44,4 +43,8 @@ public interface ReviewRepository extends JpaRepository<Review, Integer> {
      */
     @Query("SELECT r FROM Review r JOIN FETCH r.tour t WHERE r.isVisible = true")
     List<Review> findAllVisible();
+
+    /** Dashboard: average rating toàn bộ hệ thống */
+    @Query("SELECT AVG(r.rating) FROM Review r WHERE r.isVisible = true")
+    Double calculateAverageRating();
 }

@@ -33,7 +33,7 @@ spring:
         - id: iam-service
           uri: lb://iam-service
           predicates:
-            - Path=/api/auth/**, /api/admin/auth/**, /api/users/**, /api/admin/profile/**
+            - Path=/api/auth/**, /api/admin/auth/**, /api/users/**, /api/admin/profile/**, /api/admin/users/**
           filters:
             - StripPrefix=0
 
@@ -49,7 +49,7 @@ spring:
         - id: booking-service
           uri: lb://booking-service
           predicates:
-            - Path=/api/bookings/**, /api/coupons/**
+            - Path=/api/bookings/**, /api/coupons/**, /api/admin/bookings/**
           filters:
             - StripPrefix=0
 
@@ -87,6 +87,14 @@ spring:
             - Path=/ws/**
           filters:
             - StripPrefix=0
+
+        # ─── Analytics Service — Admin Dashboard (rewrite /api/admin/dashboard → /api/dashboard) ───
+        - id: analytics-service-admin-dashboard
+          uri: lb://analytics-service
+          predicates:
+            - Path=/api/admin/dashboard/**
+          filters:
+            - RewritePath=/api/admin/dashboard/(?<seg>.*), /api/dashboard/${seg}
 
         # ─── Analytics Service ───
         - id: analytics-service
