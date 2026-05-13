@@ -67,7 +67,7 @@ BookingServiceImpl.cancelBooking()
     ┌───────────────────────────────────────┐    (atomic with booking save)
     │  RabbitMQ  (port 5672)                │
     │                                       │
-    │  Exchange: booking.events (topic)     │
+    │  Exchange: tourism.events (topic)     │
     │                                       │
     │  Routing keys:                        │
     │   booking.notification.*              │──▶ booking.notification.queue
@@ -121,18 +121,56 @@ cancelBooking() {
 
 // Scheduler chạy mỗi 30s, tách transaction riêng:
 @Scheduled(fixedDelay = 30_000)
+@Transactional
 processOutbox() {
-    List<OutboxEvent> pending = outboxRepo.findByStatus(PENDING);
-    for (OutboxEvent event : pending) {
+    String instanceId = InetAddress.getLocalHost().getHostName();
+
+    // FOR UPDATE SKIP LOCKED — an toàn khi deploy nhiều instance:
+    // Instance A lock row #1 → Instance B bỏ qua row #1, lấy row #2
+    List<OutboxEvent> batch = outboxRepo
+        .findAndLockPending(LocalDateTime.now(), BATCH_SIZE);
+    // Native SQL: SELECT * FROM outbox_events
+    //             WHERE status = 'NEW' AND next_retry_at <= NOW()
+    //             LIMIT 100 FOR UPDATE SKIP LOCKED
+
+    // Đánh dấu SENDING trước (trong cùng transaction) → commit ngay
+    batch.forEach(e -> {
+        e.setStatus(SENDING);
+        e.setLockedBy(instanceId);
+        e.setLockedAt(LocalDateTime.now());
+    });
+    outboxRepo.saveAll(batch); // flush
+
+    // Gửi sau khi đã mark SENDING (ngoài transaction trên)
+    for (OutboxEvent event : batch) {
         try {
-            rabbitTemplate.send(event.getExchange(), event.getRoutingKey(), event.getPayload());
-            event.setStatus(SENT);  // mark sent
+            // Publisher Confirm: chỉ mark SENT khi broker ack
+            // rabbitTemplate cần spring.rabbitmq.publisher-confirm-type=correlated
+            CorrelationData cd = new CorrelationData(event.getIdempotencyKey());
+            rabbitTemplate.convertAndSend(
+                event.getExchange(), event.getRoutingKey(), event.getPayload(), cd);
+            // Callback ack=true  → setStatus(SENT), sentAt=NOW()
+            // Callback ack=false → scheduleRetry(event, nackCause)
         } catch (Exception e) {
-            event.incrementRetries();
-            if (event.getRetries() >= 3) event.setStatus(FAILED); // → DLQ manual review
+            scheduleRetry(event, e.getMessage());
+            // next_retry_at = NOW() + 2^retries * 30s (exponential backoff)
+            // nếu retries >= max_retries → status = DEAD → cần alert
         }
-        outboxRepo.save(event);
     }
+}
+
+// scheduleRetry():
+void scheduleRetry(OutboxEvent event, String error) {
+    event.incrementRetries();
+    if (event.getRetries() >= event.getMaxRetries()) {
+        event.setStatus(DEAD); // → alert, cần manual re-trigger
+    } else {
+        long backoffSecs = (long) Math.pow(2, event.getRetries()) * 30;
+        event.setNextRetryAt(LocalDateTime.now().plusSeconds(backoffSecs));
+        event.setStatus(NEW);  // unlock để lần sau retry
+    }
+    event.setErrorMessage(error);
+    outboxRepo.save(event);
 }
 ```
 
@@ -141,19 +179,68 @@ processOutbox() {
 ```sql
 CREATE TABLE outbox_events (
     id              BIGSERIAL PRIMARY KEY,
-    idempotency_key VARCHAR(100) UNIQUE NOT NULL,  -- bookingCode_eventType_timestamp
+    idempotency_key VARCHAR(100) UNIQUE NOT NULL,  -- bookingCode_eventType_epochMs
     exchange        VARCHAR(100) NOT NULL,
     routing_key     VARCHAR(100) NOT NULL,
     payload         TEXT         NOT NULL,          -- JSON của BookingEventDTO
-    status          VARCHAR(20)  NOT NULL DEFAULT 'PENDING', -- PENDING|SENT|FAILED
+    status          VARCHAR(20)  NOT NULL DEFAULT 'NEW',
+    -- State machine: NEW → SENDING → SENT  (thành công)
+    --                NEW/SENDING → NEW     (retry sau backoff)
+    --                NEW → DEAD            (sau max_retries lần thất bại)
     retries         INT          NOT NULL DEFAULT 0,
+    max_retries     INT          NOT NULL DEFAULT 5,
+    locked_by       VARCHAR(100),                   -- hostname:pid instance đang giữ lock
+    locked_at       TIMESTAMP,                      -- thời điểm lấy lock
+    next_retry_at   TIMESTAMP    NOT NULL DEFAULT NOW(), -- exponential backoff
     created_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
     sent_at         TIMESTAMP,
-    error_message   TEXT
+    error_message   TEXT,
+    version         INT          NOT NULL DEFAULT 0  -- optimistic locking nếu cần
 );
+
+-- Index để scheduler query nhanh
+CREATE INDEX idx_outbox_pending ON outbox_events (status, next_retry_at)
+    WHERE status = 'NEW';
 ```
 
 **Idempotency key**: `BK12345678_CANCELLED_1715577600000` → nếu scheduler relay 2 lần cùng key, notification-service nhận 2 lần nhưng check `idempotency_key` và bỏ qua lần 2.
+
+> ⚠️ **Multi-instance safety**: Nếu deploy 2+ booking-service instances, scheduler dùng `FOR UPDATE SKIP LOCKED` để tránh 2 instance cùng đọc row PENDING. Xem chi tiết ở mục 3.3.
+
+---
+
+### 3.3 Multi-instance safety — `FOR UPDATE SKIP LOCKED`
+
+Nếu deploy 2+ booking-service instances, cả 2 scheduler có thể đọc cùng row `NEW` và publish trùng:
+
+```
+Instance A: SELECT * FROM outbox_events WHERE status='NEW' LIMIT 100;  → lấy row #1
+Instance B: SELECT * FROM outbox_events WHERE status='NEW' LIMIT 100;  → lấy row #1 (trùng!)
+Instance A: rabbitTemplate.send(row#1)  → message #1 vào queue
+Instance B: rabbitTemplate.send(row#1)  → message #1 vào queue LẦN 2 → notification trùng!
+```
+
+Giải pháp — `FOR UPDATE SKIP LOCKED` trong PostgreSQL:
+
+```sql
+-- OutboxEventRepository.java (native query):
+@Query(value = """
+    SELECT * FROM outbox_events
+    WHERE status = 'NEW' AND next_retry_at <= NOW()
+    ORDER BY created_at ASC
+    LIMIT :batchSize
+    FOR UPDATE SKIP LOCKED
+    """, nativeQuery = true)
+List<OutboxEvent> findAndLockPending(@Param("batchSize") int batchSize);
+```
+
+```
+Instance A: FOR UPDATE SKIP LOCKED → lock row #1, row #2
+Instance B: FOR UPDATE SKIP LOCKED → bỏ qua row #1 và #2 (đã lock), lấy row #3, #4
+→ Không bao giờ publish trùng
+```
+
+Lưu ý: method này phải được gọi **trong transaction** (`@Transactional` trên service method) để lock giữ trong suốt thời gian xử lý batch.
 
 ---
 
@@ -212,10 +299,43 @@ cancelBooking() {
 ```
 
 **Tại sao không dùng RabbitMQ cho coins mà vẫn cần Feign IAM?**
-Lý do: `addCoins()` là **financial operation** cần confirm ngay, không phải notification. Nhưng với Outbox, thứ tự thực hiện được đảm bảo:
+Lý do: `addCoins()` là **financial operation** cần confirm từ IAM, không phải fire-and-forget. Với Outbox relay qua Feign:
 - Booking CANCELLED trong DB trước
 - Coin relay chạy sau (tối đa 30s delay — chấp nhận được)
-- Idempotency key đảm bảo không double-credit
+- IAM dùng bảng `coin_transactions` (không phải field đơn trong User) để đảm bảo idempotency
+
+**Idempotency trong IAM — `coin_transactions` table:**
+
+```sql
+CREATE TABLE coin_transactions (
+    id            BIGSERIAL PRIMARY KEY,
+    operation_key VARCHAR(100) UNIQUE NOT NULL,  -- idempotency key từ outbox
+    user_id       BIGINT NOT NULL,
+    amount        NUMERIC(19,2) NOT NULL,
+    direction     VARCHAR(10) NOT NULL,           -- CREDIT / DEBIT
+    created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+```java
+// UserServiceImpl.addCoins(userId, amount, operationKey)
+@Transactional
+void addCoins(Long userId, BigDecimal amount, String operationKey) {
+    if (coinTransactionRepo.existsByOperationKey(operationKey)) {
+        return; // đã xử lý rồi → bỏ qua (idempotent, không được cộng lần 2)
+    }
+    User user = userRepo.findById(userId).orElseThrow();
+    user.setCoinBalance(user.getCoinBalance().add(amount));
+    userRepo.save(user);
+    coinTransactionRepo.save(new CoinTransaction(operationKey, userId, amount, CREDIT));
+    // cả hai được commit trong cùng transaction → atomic
+}
+```
+
+Cách này tốt hơn `lastCoinOperationKey` trong bảng `users` vì:
+- Giữ đầy đủ lịch sử hoàn xu (audit trail)
+- Không gây lock contention trên row User khi nhiều request cùng lúc
+- `UNIQUE` constraint trên `operation_key` dựa vào DB engine, không cần application-level check
 
 ---
 
@@ -276,7 +396,7 @@ POST /api/bookings/admin/update-status {bookingID, status:"PAID"}
          ▼ return response
 
 [Outbox Relay]
-         └── rabbitTemplate.send("booking.events", "booking.notification.confirmed", payload)
+         └── rabbitTemplate.send("tourism.events", "booking.notification.confirmed", payload)
 
 [notification-service]
          ├── mailService.sendPaymentConfirmationEmail() → Email khách "Đặt tour thành công!"
@@ -426,7 +546,30 @@ Timeline:
  User nhận coin muộn vài phút, nhưng ĐẢM BẢO NHẬN
 ```
 
-Idempotency trong IAM: thêm field `last_coin_operation_key` vào User entity → nếu key giống nhau → bỏ qua → tránh double credit.
+Idempotency trong IAM: bảng `coin_transactions` (xem mục 4.2) — `UNIQUE(operation_key)` do DB engine đảm bảo, không phải field đơn trong User. IAM restart bao nhiêu lần cũng không cộng xu 2 lần với cùng `operation_key`.
+
+---
+
+### 6.4 Hai tầng retry — phân biệt rõ
+
+> ⚠️ **Không nên trộn lẫn**: `DEAD` trong outbox ≠ DLQ trong RabbitMQ. Chúng độc lập và giải quyết 2 failure point khác nhau.
+
+| Tầng | Xảy ra khi | Cơ chế | Kết quả cuối |
+|------|-----------|---------|-------------|
+| **Outbox publish fail** | booking-service → RabbitMQ lỗi (MQ down, routing sai, network) | `next_retry_at` + exponential backoff, tối đa `max_retries=5` lần | `DEAD` → alert admin/log ERROR → manual re-trigger |
+| **Consumer process fail** | notification-service nhận message nhưng xử lý lỗi (SMTP down, DB lỗi, NullPointer) | `@RabbitListener` + Spring Retry (`@Retryable`), tối đa 3 lần | Vào `booking.notification.dlq` → monitor qua management UI |
+
+```
+Flow đầy đủ:
+
+booking-service —[publish fail]→ outbox.status=NEW (retry backoff)
+                               → outbox.status=DEAD (sau max_retries)
+
+booking-service —[publish ok]→ RabbitMQ queue
+                               → notification-service @RabbitListener
+                                   —[process fail x3]→ booking.notification.dlq
+                                   —[process ok]→ email/WS sent, ack()
+```
 
 ---
 
@@ -466,8 +609,9 @@ Idempotency trong IAM: thêm field `last_coin_operation_key` vào User entity �
 
 | File | Hành động | Mô tả |
 |---|---|---|
-| `entity/User.java` | Sửa | Thêm `lastCoinOperationKey` (String) |
-| `service/impl/UserServiceImpl.addCoins()` | Sửa | Check `operationKey` trước khi cộng → idempotent |
+| `entity/CoinTransaction.java` | Tạo mới | Entity cho bảng `coin_transactions` (id, operation_key UNIQUE, user_id, amount, direction, created_at) |
+| `repository/CoinTransactionRepository.java` | Tạo mới | `existsByOperationKey(String key)` |
+| `service/impl/UserServiceImpl.addCoins()` | Sửa | Nhận thêm `operationKey` param; check `coin_transactions` trước khi cộng xu |
 
 ### Frontend — admin
 
@@ -489,34 +633,43 @@ Idempotency trong IAM: thêm field `last_coin_operation_key` vào User entity �
 
 ---
 
-## 8. Thứ tự triển khai (dependency order)
+## 8. Thứ tự triển khai (4 phase rõ ràng)
 
 ```
-Phase A — Foundation (blocking cho tất cả)
-  A1. Outbox entity + repository + migration SQL
-  A2. RabbitMQConfig (booking-service + notification-service)
-  A3. BookingEventDTO thêm eventType + idempotencyKey
+Phase 1 — Outbox + RabbitMQ cho notification booking  ← BLOCKING cho các phase sau
+  1a. outbox_events migration SQL (schema mới với locking columns)
+  1b. OutboxEvent entity + OutboxEventRepository (findAndLockPending nạtive query)
+  1c. RabbitMQConfig (tourism.events exchange, queues, DLQs) — booking-service
+  1d. RabbitMQConfig — notification-service
+  1e. BookingEventDTO thêm eventType, idempotencyKey, occurredAt
+  1f. OutboxRelayScheduler (FOR UPDATE SKIP LOCKED + publisher confirm)
+  1g. BookingEventListener (@RabbitListener, dispatch theo eventType)
+  1h. Sửa BookingServiceImpl: 4 Feign notification calls → outboxRepository.save()
+  1i. Test: tắt notification-service → cancel booking → restart → email đến
 
-Phase B — Core messaging (sau A)
-  B1. OutboxRelayScheduler (booking-service)
-  B2. BookingEventListener (notification-service)
-  B3. Sửa BookingServiceImpl: thay Feign → outbox.save()
+Phase 2 — Coin refund idempotency  ← có thể song song với Phase 1 từ bước 1h
+  2a. coin_transactions migration SQL (IAM DB)
+  2b. CoinTransaction entity + CoinTransactionRepository — iam-service
+  2c. Sửa UserServiceImpl.addCoins(): nhận operationKey, check coin_transactions
+  2d. Sửa cancelBooking(): lưu outbox COIN_REFUND thay vì gọi IAM trực tiếp
+  2e. CoinRefundRelayScheduler (cùng pattern FOR UPDATE SKIP LOCKED)
+  2f. Sửa IamFeignClient.addCoins() signature: thêm @RequestParam operationKey
+  2g. Test double-refund: mock IAM fail lần 1 → restart → coins cộng đúng 1 lần
 
-Phase C — Coin reliability (parallel với B)
-  C1. Sửa cancelBooking() → outbox COIN_REFUND
-  C2. CoinRefundRelayScheduler
-  C3. Idempotency trong UserServiceImpl.addCoins()
+Phase 3 — Auto-expire + departure reminder  ← sau Phase 1
+  3a. BookingExpiryScheduler (@Scheduled/1m, PENDING_PAYMENT quá hạn → OVERDUE_PAYMENT)
+  3b. DepartureReminderScheduler (@Scheduled cron 8h sáng)
+  3c. booking.created event khi tạo booking mới
+  3d. Email templates mới: BOOKING_CREATED, PAYMENT_EXPIRED, DEPARTURE_REMINDER
+  3e. Test: tạo booking timeLimit=NOW()-1phút → scheduler chạy → OVERDUE_PAYMENT
 
-Phase D — New events (parallel sau B)
-  D1. booking.created event
-  D2. Auto-expiry scheduler
-  D3. Departure reminder scheduler
-
-Phase E — Frontend (parallel sau B)
-  E1. AdminNotificationBell + useAdminNotifications
-  E2. UserNotificationBell
-  E3. SLA badge + sort PENDING_REFUND
-  E4. TransactionListItem coin pending message
+Phase 4 — Frontend notification center  ← sau Phase 1
+  4a. AdminNotificationBell.jsx + useAdminNotifications.ts
+  4b. UserNotificationBell.jsx + useUserNotifications.ts
+  4c. GET /api/notifications/admin?unread=true + PATCH /api/notifications/{id}/read
+  4d. SLA badge PENDING_REFUND (màu theo giờ chờ)
+  4e. Default sort ASC khi filter PENDING_REFUND trong BookingsPage
+  4f. TransactionListItem: hiển thị "Coins sẽ hoàn trong ít phút" khi coinRefundPending > 0
 ```
 
 ---
@@ -537,11 +690,17 @@ Phase E — Frontend (parallel sau B)
 | Quyết định | Lý do |
 |---|---|
 | Outbox trong booking-service DB | Đơn giản hơn, booking-service là nguồn sự thật |
+| Exchange: `tourism.events` (không phải `booking.events`) | Linh hoạt hơn — sau này có `tour.*`, `coupon.*`, `forum.*` chỉ cần thêm binding, không tạo exchange mới |
 | Coins đi qua Outbox relay (Feign) thay vì queue riêng | Coins cần confirm từ IAM, không fire-and-forget — Feign + retry + idempotency đủ an toàn |
+| Idempotency coins: `coin_transactions` table (không phải `lastCoinOperationKey` trong User) | Giữ audit trail, tránh lock contention trên row User, UNIQUE constraint do DB engine xử lý |
+| Outbox locking: `FOR UPDATE SKIP LOCKED` | Chuẩn PostgreSQL cho multi-instance scheduler, không cần Redis/ZooKeeper |
+| Publisher confirm (`publisher-confirm-type=correlated`) | Mark SENT chỉ khi broker ack — tránh mất message do routing fail giữa chừng |
+| Status: NEW/SENDING/SENT/DEAD (không phải PENDING/SENT/FAILED) | Rõ hơn: SENDING = đang xử lý (tránh instance khác lấy trùng), DEAD = quá số retry (cần alert) |
+| 2 tầng retry tách biệt (outbox DEAD ≠ consumer DLQ) | Mỗi tầng fail vì lý do khác nhau, xử lý khác nhau |
 | Không dùng Spring Cloud Stream | Overhead không cần thiết; Spring AMQP trực tiếp rõ ràng hơn |
 | Giữ REST endpoints `/api/notifications/` | Backward compatible, không xóa Feign client ngay — chạy song song trong giai đoạn migration |
-| Notification read/unread API | Cần thêm `GET /api/notifications/admin?unread=true` và `PATCH /api/notifications/{id}/read` vào notification-service |
 | Topic exchange thay vì Direct | Linh hoạt — sau này thêm analytics, forum chỉ cần thêm binding |
-| DLQ + retry 3 lần | Tránh mất email khi SMTP timeout, quan sát lỗi qua management UI |
+| DLQ + retry 3 lần (consumer side) | Tránh mất email khi SMTP timeout, quan sát lỗi qua management UI |
 | Analytics queue tách riêng | Notification và analytics có SLA khác nhau |
 | Không dùng RabbitMQ Delayed Message Plugin | Plugin không có sẵn trong image `rabbitmq:3-management-alpine`; dùng `@Scheduled` thay thế |
+| `BookingStatus.REFUNDED` không thêm | Dùng `CANCELLED + refundStatus=COMPLETED` — tránh phải migrate enum hiện có |
