@@ -23,10 +23,9 @@ BookingServiceImpl.cancelBooking()
                  (catch Exception chỉ log, không retry)
 ```
 
-**3 vấn đề nghiêm trọng:**
+**2 vấn đề nghiêm trọng:**
 1. **Email mất vĩnh viễn**: notification-service down → `catch (Exception e) { log.error(...) }` → email không bao giờ gửi lại
 2. **Double refund risk**: `addCoins` thành công + booking save fail → user nhận coins nhưng booking vẫn PAID → user cancel lại → coins 2 lần
-3. **Không có `booking.created` event**: user đặt tour xong không nhận email xác nhận ngay, chỉ nhận khi admin confirm (PAID)
 
 ### 1.2 Tại sao RabbitMQ là giải pháp đúng
 
@@ -35,8 +34,6 @@ BookingServiceImpl.cancelBooking()
 | notification-service down | Email mất vĩnh viễn | Message nằm queue, khi service up lại → tự gửi |
 | RabbitMQ down | N/A | Outbox trong DB → scheduler relay khi MQ up |
 | Double refund coins | Race condition | Outbox idempotency key → đúng 1 lần |
-| Không có email đặt tour | Không có | Event `BOOKING_CREATED` mới |
-| Auto-cancel quá hạn | Không có | Scheduler + event |
 | Audit trail | Không có | Mọi event lưu trong outbox_events table |
 
 ---
@@ -52,7 +49,7 @@ BookingServiceImpl.cancelBooking()
 │  │                 │    1. UPDATE bookings  │  ┌──────────────┐   │    │
 │  │ cancelBooking() │    2. INSERT outbox    │  │   bookings   │   │    │
 │  │ adminUpdate()   │                        │  ├──────────────┤   │    │
-│  │ createBooking() │                        │  │outbox_events │◀──┤    │
+│  │ requestRefund() │                        │  │outbox_events │◀──┤    │
 │  └────────┬────────┘                        │  │ (guaranteed) │   │    │
 │           │                                 │  └──────┬───────┘   │    │
 │  ┌────────▼────────┐                        └─────────┼───────────┘    │
@@ -440,67 +437,6 @@ User gửi thông tin ngân hàng
                  └── webSocketService.notifyUser()
 ```
 
-### Luồng 4: booking.created (MỚI — hiện tại không có)
-
-```
-User hoàn tất booking mới (sau payment)
-         │
-         ▼ @Transactional
-         ├── bookings INSERT (status=PENDING_PAYMENT)
-         ├── outbox_events INSERT (type=NOTIFICATION, BOOKING_CREATED)
-         └── COMMIT
-
-[Outbox Relay → notification-service]
-         ├── mailService.sendBookingCreatedEmail()
-         │       Subject: "Đặt tour thành công! Vui lòng thanh toán trước [HH:mm DD/MM]"
-         │       Body: mã booking, tour, ngày đi, hạn thanh toán, link thanh toán
-         ├── saveNotification(userId, BOOKING_CREATED)
-         └── webSocketService.notifyUser(userId, {PENDING_PAYMENT})
-```
-
-### Luồng 5: Auto-expiry PENDING_PAYMENT (MỚI)
-
-```
-@Scheduled(fixedRate = 60_000) // mỗi 1 phút
-BookingExpiryScheduler.run() {
-    List<Booking> expired = bookingRepository
-        .findExpiredPendingPayments(LocalDateTime.now());
-        // WHERE status='PENDING_PAYMENT' AND timeLimit < NOW()
-
-    for (Booking b : expired) {
-        @Transactional {
-            b.setBookingStatus(OVERDUE_PAYMENT);
-            bookingRepository.save(b);
-            outboxRepository.save(OutboxEvent.notification(b, "PAYMENT_EXPIRED"));
-        }
-    }
-}
-
-[notification-service nhận PAYMENT_EXPIRED]
-         ├── mailService.sendPaymentExpiredEmail()
-         │       "Booking BKxxx đã hết hạn thanh toán và bị hủy tự động"
-         └── webSocketService.notifyUser()
-```
-
-### Luồng 6: Departure Reminder (MỚI — nice-to-have)
-
-```
-@Scheduled(cron = "0 0 8 * * ?") // mỗi ngày 8h sáng
-DepartureReminderScheduler.run() {
-    LocalDate tomorrow = LocalDate.now().plusDays(1);
-    List<Booking> departing = bookingRepository
-        .findPaidBookingsDepartingOn(tomorrow);
-
-    for (Booking b : departing) {
-        outboxRepository.save(OutboxEvent.notification(b, "DEPARTURE_REMINDER"));
-    }
-}
-
-[notification-service]
-    mailService.sendDepartureReminderEmail()
-        "Nhắc nhở: Ngày mai [Tour X] khởi hành. Điểm tập kết: ..."
-```
-
 ---
 
 ## 6. Recovery khi service down
@@ -585,9 +521,7 @@ booking-service —[publish ok]→ RabbitMQ queue
 | `repository/OutboxEventRepository.java` | Tạo mới | `findByStatusAndRetriesLessThan` |
 | `messaging/OutboxRelayScheduler.java` | Tạo mới | `@Scheduled` relay logic |
 | `messaging/CoinRefundRelayScheduler.java` | Tạo mới | Relay COIN_REFUND type riêng |
-| `service/impl/BookingServiceImpl.java` | Sửa | Thay Feign calls → outboxRepository.save() |
-| `scheduler/BookingExpiryScheduler.java` | Tạo mới | Auto-expiry PENDING_PAYMENT |
-| `repository/BookingRepository.java` | Sửa | Thêm `findExpiredPendingPayments` |
+| `service/impl/BookingServiceImpl.java` | Sửa | Thay 4 Feign calls hiện có → outboxRepository.save() |
 | `entity/Booking.java` | Sửa | Thêm field `coinRefundPending` (nullable) |
 | `application.yml` | Sửa | Verify `spring.rabbitmq` + scheduler config |
 
@@ -597,11 +531,9 @@ booking-service —[publish ok]→ RabbitMQ queue
 |---|---|---|
 | `pom.xml` | Sửa | Thêm `spring-boot-starter-amqp` |
 | `config/RabbitMQConfig.java` | Tạo mới | Khai báo queue giống booking-service (idempotent) |
-| `messaging/BookingEventListener.java` | Tạo mới | `@RabbitListener` dispatch theo `eventType` |
-| `service/NotificationService.java` | Sửa | Thêm `handleBookingCreated`, `handleRefundCompleted`, `handlePaymentExpired`, `handleDepartureReminder` |
-| `service/impl/NotificationServiceImpl.java` | Sửa | Implement 4 methods mới |
-| `service/MailService.java` | Sửa | Thêm 3 method mới |
-| `service/impl/MailServiceImpl.java` | Sửa | Email templates cho event mới |
+| `messaging/BookingEventListener.java` | Tạo mới | `@RabbitListener` dispatch theo `eventType` → map sang 3 handler hiện có |
+| `service/NotificationService.java` | Sửa | Thêm `handleRefundCompleted` (admin cancel sau SePay verify) |
+| `service/impl/NotificationServiceImpl.java` | Sửa | Implement `handleRefundCompleted` |
 | `dto/BookingEventDTO.java` | Sửa | Thêm field `eventType`, `idempotencyKey` |
 | `application.yml` | Sửa | Thêm `spring.rabbitmq` config |
 
@@ -656,12 +588,8 @@ Phase 2 — Coin refund idempotency  ← có thể song song với Phase 1 từ 
   2f. Sửa IamFeignClient.addCoins() signature: thêm @RequestParam operationKey
   2g. Test double-refund: mock IAM fail lần 1 → restart → coins cộng đúng 1 lần
 
-Phase 3 — Auto-expire + departure reminder  ← sau Phase 1
-  3a. BookingExpiryScheduler (@Scheduled/1m, PENDING_PAYMENT quá hạn → OVERDUE_PAYMENT)
-  3b. DepartureReminderScheduler (@Scheduled cron 8h sáng)
-  3c. booking.created event khi tạo booking mới
-  3d. Email templates mới: BOOKING_CREATED, PAYMENT_EXPIRED, DEPARTURE_REMINDER
-  3e. Test: tạo booking timeLimit=NOW()-1phút → scheduler chạy → OVERDUE_PAYMENT
+Phase 3 (out-of-scope — do team khác phụ trách)
+  BOOKING_CREATED event, auto-expire, departure reminder → không làm trong plan này
 
 Phase 4 — Frontend notification center  ← sau Phase 1
   4a. AdminNotificationBell.jsx + useAdminNotifications.ts
@@ -679,8 +607,7 @@ Phase 4 — Frontend notification center  ← sau Phase 1
 1. **Outbox test**: Tắt notification-service → cancel booking → restart notification-service → email đến trong < 1 phút
 2. **RabbitMQ down test**: Tắt RabbitMQ → cancel booking → DB có outbox row PENDING → bật RabbitMQ → scheduler relay → email gửi
 3. **Double coin test**: Mock IAM fail lần 1 → booking CANCELLED trong DB → IAM up → coin cộng đúng 1 lần (idempotency key không cho cộng lần 2)
-4. **Auto-expiry test**: Tạo booking `timeLimit = NOW() - 1 phút` → chờ scheduler chạy → status = OVERDUE_PAYMENT
-5. **Kiểm tra queue**: Vào `http://localhost:15672` (user: `tourism`, pass: `tourism123`) → xem message rates + consumer count
+4. **Kiểm tra queue**: Vào `http://localhost:15672` (user: `tourism`, pass: `tourism123`) → xem message rates + consumer count
 6. **Kiểm tra DLQ**: Gửi event payload sai format → xem message vào DLQ sau 3 retries
 
 ---
@@ -704,3 +631,5 @@ Phase 4 — Frontend notification center  ← sau Phase 1
 | Analytics queue tách riêng | Notification và analytics có SLA khác nhau |
 | Không dùng RabbitMQ Delayed Message Plugin | Plugin không có sẵn trong image `rabbitmq:3-management-alpine`; dùng `@Scheduled` thay thế |
 | `BookingStatus.REFUNDED` không thêm | Dùng `CANCELLED + refundStatus=COMPLETED` — tránh phải migrate enum hiện có |
+| `BOOKING_CREATED`, `PAYMENT_EXPIRED`, `DEPARTURE_REMINDER` out-of-scope | Không có Feign call nào cho chức năng này trong code hiện tại; team khác phụ trách |
+| Không dùng RabbitMQ Delayed Message Plugin | Plugin không có sẵn trong image `rabbitmq:3-management-alpine`; nếu sau này cần auto-expire thì dùng `@Scheduled` |
