@@ -20,6 +20,8 @@ OutboxEvent.incrementRetries(error)
 | DLQ không có consumer | 🟡 Trung bình | Message trong `booking.notification.dlq` chết mãi |
 | `TransactionDetailModal` thiếu refund info | 🟠 Cao | User không biết số tiền hoàn/tài khoản nhận tiền |
 | Không có Admin UI xem DEAD events | 🟡 Trung bình | DevOps mù — phải vào DB kiểm tra thủ công |
+| `CoinRefundRelayScheduler` thiếu stale lock reset | 🔴 Rất cao | Lock treo vĩnh viễn → scheduler bỏ qua event mãi mãi |
+| Thiếu `coinRefundStatus` trên `Booking` entity | 🟠 Cao | User/Admin không thấy trạng thái hoàn xu (PENDING/COMPLETED/FAILED) |
 
 ---
 
@@ -39,11 +41,59 @@ Timeline nguy hiểm:
 ### Lớp 1 — Tăng `maxRetries` cho COIN_REFUND lên 20 (thay vì 5)
 
 - Hiện tại max_retries=5, backoff: 30s, 60s, 120s, 240s, 480s → tổng ~15 phút rồi DEAD
-- Với coin refund: tăng lên 20 → grace period ~3 giờ trước khi DEAD
-- Thực hiện: `OutboxEventFactory.coinRefund()` set `.maxRetries(20)` trong builder
+- Với coin refund: tăng lên 20 và thêm **`maxBackoffSecs=3600`** (cap 1 giờ/retry tránh backoff vô hạn)
+- Backoff formula cập nhật: `min(2^n * 30, maxBackoffSecs)` → 30, 60, 120, 240, 480, 960, 1800, 3600, 3600, ...
+- Grace period với maxRetries=20 + cap=3600s: ≈ 54 180s ≈ **~15 giờ** trước khi DEAD
+- Thực hiện: `OutboxEventFactory.coinRefund()` set `.maxRetries(20)` trong builder; thêm field `maxBackoffSecs` (default=3600) vào `OutboxEvent`; update `incrementRetries()`: `long backoff = Math.min((long)Math.pow(2, retries) * 30L, maxBackoffSecs)`
 
 **File cần sửa:**
+- `booking-service/.../entity/OutboxEvent.java` — thêm `maxBackoffSecs` field, update `incrementRetries()`
 - `booking-service/.../messaging/OutboxEventFactory.java` — builder `.maxRetries(20)` cho coinRefund path
+
+### Lớp 1b — Stale Lock Recovery cho CoinRefundRelayScheduler (sửa bug)
+
+`OutboxRelayScheduler` đã có `resetStaleLocks()` nhưng **`CoinRefundRelayScheduler` thì không**. Nếu instance crash giữa chừng, lock bị treo vĩnh viễn.
+
+```java
+// CoinRefundRelayScheduler.relay() — thêm vào đầu method:
+@Scheduled(fixedDelay = 5_000)
+@Transactional
+public void relay() {
+    // [THÊM] Reset các stale lock (lock > 5 phút → trả về NEW)
+    outboxRepo.resetStaleLocks(LocalDateTime.now().minusMinutes(5));
+
+    // ... rest of existing code
+}
+```
+
+Query `resetStaleLocks()` đã có trong repository, idempotent, an toàn khi 2 scheduler gọi cùng lúc.
+
+**File cần sửa:**
+- `booking-service/.../messaging/CoinRefundRelayScheduler.java` — thêm `resetStaleLocks()` ở đầu `relay()`
+
+### Lớp 1c — `coinRefundStatus` trên Booking entity
+
+Thêm field `coinRefundStatus` để user và admin thấy trạng thái hoàn xu:
+
+```java
+// Booking.java — thêm field:
+@Column(name = "coin_refund_status", length = 20)
+private String coinRefundStatus; // null (không có xu) / "PENDING" / "COMPLETED" / "FAILED"
+```
+
+| Thời điểm | Set `coinRefundStatus` |
+|-----------|----------------------|
+| Booking bị cancel có xu → save outbox COIN_REFUND | `"PENDING"` |
+| CoinRefundRelayScheduler: event → SENT | `"COMPLETED"` |
+| CoinRefundRelayScheduler: event → DEAD | `"FAILED"` |
+| Admin retry thành công → SENT | `"COMPLETED"` |
+
+Expose trong `BookingResponse` DTO và TS DTO `BookingResponseDTO.ts`.
+
+**File cần sửa:**
+- `booking-service/.../entity/Booking.java` — thêm `coinRefundStatus` field
+- `booking-service/.../dto/BookingResponse.java` — expose field
+- `tourism_frontend/.../dto/responseDTO/BookingResponseDTO.ts` — thêm `coinRefundStatus`
 
 ### Lớp 2 — Alert Email khi DEAD (mới)
 
@@ -56,7 +106,7 @@ Thêm `DeadEventAlertScheduler` trong booking-service, chạy mỗi 10 phút:
 public class DeadEventAlertScheduler {
 
     private final OutboxEventRepository outboxRepo;
-    private final MailService mailService; // inject hoặc gọi qua HTTP
+    private final RabbitTemplate rabbitTemplate; // gửi alert event cho notification-service qua MQ
 
     @Scheduled(fixedDelay = 600_000)
     public void checkDeadEvents() {
@@ -65,12 +115,23 @@ public class DeadEventAlertScheduler {
         long notifDead = outboxRepo.countByStatus(OutboxStatus.DEAD) - coinDeadList.size();
 
         if (!coinDeadList.isEmpty()) {
-            log.error("ALERT: {} COIN REFUND events are DEAD — users missing coins!", coinDeadList.size());
-            // TODO: gọi mail alert đến admin email
-            // mailService.sendDeadCoinRefundAlert(coinDeadList);
+            // 1. Log rõ để alert dễ grep
+            log.error("[DEAD_COIN_REFUND] count={} — admin must intervene, affected ids={}",
+                    coinDeadList.size(),
+                    coinDeadList.stream().map(e -> e.getId().toString()).collect(Collectors.joining(",")));
+
+            // 2. Publish ADMIN_ALERT event lên MQ → notification-service gửi email cho admin
+            AdminAlertDTO alert = AdminAlertDTO.builder()
+                    .alertType("DEAD_COIN_REFUND")
+                    .count(coinDeadList.size())
+                    .build();
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.EXCHANGE,
+                    RabbitMQConfig.RK_ADMIN_ALERT,  // "booking.admin.alert"
+                    alert);
         }
         if (notifDead > 0) {
-            log.warn("ALERT: {} NOTIFICATION events are DEAD", notifDead);
+            log.error("[DEAD_NOTIFICATION] count={} — messages not sent", notifDead);
         }
     }
 }
@@ -107,13 +168,19 @@ public void retryDeadEvent(Long id) {
     event.setRetries(0);
     event.setNextRetryAt(LocalDateTime.now());
     event.setErrorMessage(null);
+    // [QUAN TRỌNG] Reset lock fields — không có thì scheduler skip event này
+    event.setLockedBy(null);
+    event.setLockedAt(null);
+    event.setSentAt(null);
     outboxRepo.save(event);
     // Scheduler sẽ pick up trong ≤5s
 }
 ```
 
+> **Không cần JWT:** Controller dùng `@RestController` thông thường, **không** có `@PreAuthorize` vì JWT chưa implement. Bảo vệ tạm bằng route convention hoặc check header `X-Admin: true` nếu muốn.
+
 **Files cần thêm:**
-- `booking-service/.../controller/DeadEventAdminController.java` (mới)
+- `booking-service/.../controller/DeadEventAdminController.java` (mới — plain @RestController, no security)
 - `booking-service/.../service/DeadEventAdminService.java` (mới)
 
 ---
