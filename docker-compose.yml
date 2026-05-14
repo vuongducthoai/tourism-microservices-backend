@@ -318,12 +318,18 @@ services:
       - MAIL_USERNAME=trananhthu270904@gmail.com
       - MAIL_PASSWORD=kskw auzz nimm uybc
       - ADMIN_EMAIL=22110431@student.hcmute.edu.vn
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=tourism
+      - RABBITMQ_PASSWORD=tourism123
     depends_on:
       service-discovery:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8086/actuator/health"]

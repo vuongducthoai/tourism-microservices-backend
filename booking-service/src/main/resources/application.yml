@@ -25,6 +25,8 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:tourism}
     password: ${RABBITMQ_PASSWORD:tourism123}
+    publisher-confirm-type: correlated
+    publisher-returns: true
 
 eureka:
   client:

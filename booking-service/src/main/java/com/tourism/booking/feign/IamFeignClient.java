@@ -12,9 +12,12 @@ public interface IamFeignClient {
 
     /**
      * Add coins to user's balance after a coin-refund cancellation.
-     * Maps to POST /api/users/{userId}/coins?amount=X in iam-service.
-     * NOTE: Using POST instead of PATCH because Java HttpURLConnection does not support PATCH.
+     * Maps to POST /api/users/{userId}/coins?amount=X&operationKey=Y in iam-service.
+     * operationKey guarantees idempotency (stored in coin_transactions table).
      */
     @PostMapping("/api/users/{userId}/coins")
-    void addCoins(@PathVariable Integer userId, @RequestParam BigDecimal amount);
+    void addCoins(
+            @PathVariable Integer userId,
+            @RequestParam BigDecimal amount,
+            @RequestParam String operationKey);
 }
