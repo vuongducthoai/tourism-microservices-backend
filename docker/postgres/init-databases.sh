@@ -10,6 +10,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     CREATE DATABASE forum_db;
     CREATE DATABASE notification_db;
     CREATE DATABASE analytics_db;
+    CREATE DATABASE keycloak_db;
 EOSQL
 
-echo "✅ All 7 databases created successfully!"
+echo "All 8 databases created successfully!"
