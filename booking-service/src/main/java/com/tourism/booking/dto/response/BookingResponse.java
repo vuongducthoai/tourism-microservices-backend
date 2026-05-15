@@ -55,4 +55,7 @@ public class BookingResponse {
     private String        refundAccountNumber;
     private String        refundAccountName;
     private String        refundStatus;
+
+    // Coin refund status: null | PENDING | COMPLETED | FAILED
+    private String        coinRefundStatus;
 }

@@ -20,6 +20,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+      TZ: Asia/Ho_Chi_Minh
+      PGTZ: Asia/Ho_Chi_Minh
     ports:
       - "5433:5432"
     volumes:
@@ -80,6 +82,8 @@ services:
     ports:
       - "8761:8761"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - EUREKA_HOST=service-discovery
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8761/actuator/health"]
@@ -99,6 +103,8 @@ services:
     ports:
       - "8888:8888"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - EUREKA_HOST=service-discovery
     depends_on:
       service-discovery:
@@ -121,6 +127,8 @@ services:
     ports:
       - "8080:8080"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - EUREKA_HOST=service-discovery
       - REDIS_HOST=redis
     depends_on:
@@ -148,6 +156,8 @@ services:
     ports:
       - "8081:8081"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/iam_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -181,6 +191,8 @@ services:
     ports:
       - "8082:8082"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/tour_catalog_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -214,6 +226,8 @@ services:
     ports:
       - "8083:8083"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/booking_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -247,6 +261,8 @@ services:
     ports:
       - "8084:8084"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/payment_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -277,6 +293,8 @@ services:
     ports:
       - "8085:8085"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/forum_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -310,6 +328,8 @@ services:
     ports:
       - "8086:8086"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/notification_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -349,6 +369,8 @@ services:
     ports:
       - "8087:8087"
     environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/analytics_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres

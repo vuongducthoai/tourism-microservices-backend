@@ -84,6 +84,7 @@ class BookingServiceImplTest {
             r.setRefundAmount(b.getRefundAmount());
             r.setBookingStatus(b.getBookingStatus() != null ? b.getBookingStatus().name() : null);
             r.setDepartureID(b.getDepartureId());
+            r.setCoinRefundStatus(b.getCoinRefundStatus());
             // refund info
             if (b.getRefundInformation() != null) {
                 r.setRefundBank(b.getRefundInformation().getBank());

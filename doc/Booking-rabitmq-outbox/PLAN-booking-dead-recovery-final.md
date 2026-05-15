@@ -44,9 +44,9 @@ DLQ      : booking.notification.dlq   ← x-dead-letter-routing-key
 cancelBooking() [@Transactional]
 ├── tính refundAmount, coinRefundAmount
 ├── booking.bookingStatus    = CANCELLED
-├── booking.coinRefundStatus = PENDING    ← MỚI (chỉ khi paidByCoin > 0)
+├── booking.coinRefundStatus = PENDING    ← MỚI (chỉ khi coinRefundAmount > 0 && userId != null)
 ├── save booking
-├── save outbox routing_key=booking.coin.refund   (nếu coinRefundAmount > 0)
+├── save outbox routing_key=booking.coin.refund   (nếu coinRefundAmount > 0 && userId != null)
 └── save outbox routing_key=booking.notification.event
     └── return BookingResponse ngay — không chờ IAM hay RabbitMQ
 
@@ -54,11 +54,10 @@ CoinRefundRelayScheduler [fixedDelay=5s]
 ├── resetStaleLocks(now - 5min)               ← MỚI: fix stale lock bug
 ├── claimBatch() → mark SENDING
 └── processOne()
-    ├── [OK]  IAM.addCoins() thành công
+    ├── [OK]  IAM.addCoins() không ném exception → mark SENT
     │         ├── outbox.markSent()
     │         └── booking.coinRefundStatus = COMPLETED   ← MỚI
-    ├── [409] IAM duplicate operationKey → đã cộng rồi, mark SENT ngay   ← MỚI
-    └── [FAIL] IAM exception khác
+    └── [FAIL] IAM ném exception
               ├── incrementRetries(error) — với backoff cap   ← MỚI
               ├── còn retry → outbox NEW, nextRetryAt = now + min(2^n*30, 3600)s
               └── hết retry → outbox DEAD
@@ -70,10 +69,10 @@ OutboxRelayScheduler [fixedDelay=5s — không đổi]
 └── publish to RabbitMQ → notification-service consume
 
 Admin Retry API [no JWT — internal only]
-├── GET  /api/admin/outbox/dead?page=0&size=20
-├── GET  /api/admin/outbox/dead/count
-├── POST /api/admin/outbox/retry/{id}
-└── POST /api/admin/outbox/retry-all?routingKey=booking.coin.refund
+├── GET  /api/bookings/admin/outbox/dead?page=0&size=20
+├── GET  /api/bookings/admin/outbox/dead/count
+├── POST /api/bookings/admin/outbox/retry/{id}
+└── POST /api/bookings/admin/outbox/retry-all?routingKey=booking.coin.refund
 ```
 
 ### Backoff schedule — maxRetries=20, maxBackoffSecs=3600
@@ -159,9 +158,9 @@ public static OutboxEvent coinRefund(BookingEventDTO dto, ObjectMapper mapper) {
 
 ```java
 /**
- * Trạng thái hoàn xu. Chỉ có giá trị khi booking bị cancel và paidByCoin > 0.
+ * Trạng thái hoàn xu. Chỉ có giá trị khi booking bị cancel và coinRefundAmount > 0 && userId != null.
  *
- * null       – booking không dùng xu (paidByCoin = 0)
+ * null       – không có hoàn xu (coinRefundAmount = 0 hoặc không có userId)
  * PENDING    – đã lưu outbox COIN_REFUND, chờ CoinRefundRelayScheduler
  * COMPLETED  – IAM đã cộng xu thành công (idempotent — dù retry bao nhiêu lần)
  * FAILED     – outbox DEAD sau maxRetries=20 lần, admin cần can thiệp
@@ -185,7 +184,8 @@ Trong `cancelBooking()`, ngay trước khi `save(booking)`:
 
 ```java
 // Sau khi tính coinRefundAmount:
-if (coinRefundAmount != null && coinRefundAmount.compareTo(BigDecimal.ZERO) > 0) {
+if (coinRefundAmount != null && coinRefundAmount.compareTo(BigDecimal.ZERO) > 0
+        && booking.getUserId() != null) {
     booking.setCoinRefundStatus("PENDING");
     // outbox COIN_REFUND sẽ được lưu bên dưới trong cùng @Transactional
 }
@@ -213,7 +213,10 @@ public void relay() {
 }
 ```
 
-#### b) Inject `BookingRepository`, xử lý 3 trường hợp trong `processOne()`
+#### b) Inject `BookingRepository`, xử lý 2 trường hợp trong `processOne()`
+
+> IAM đảm bảo idempotency nội bộ qua `operationKey` trong `coin_transactions`.
+> Không cần xử lý 409 riêng — nếu IAM không ném exception thì coi là thành công.
 
 ```java
 // ← THÊM dependency injection
@@ -221,15 +224,23 @@ private final BookingRepository bookingRepo;
 
 @Transactional
 public void processOne(OutboxEvent event) {
+    BookingEventDTO dto;
     try {
-        BookingEventDTO dto = objectMapper.readValue(event.getPayload(), BookingEventDTO.class);
+        dto = objectMapper.readValue(event.getPayload(), BookingEventDTO.class);
+    } catch (Exception ex) {
+        log.error("Cannot parse payload for event {}", event.getIdempotencyKey());
+        event.incrementRetries(ex.getMessage());
+        outboxRepo.save(event);
+        return;
+    }
 
+    try {
         iamClient.addCoins(
                 dto.getUserId(),
                 dto.getCoinRefundAmount(),
                 dto.getCoinRefundOperationKey());
 
-        // [OK] IAM đã cộng xu thành công
+        // [OK] IAM không ném exception → mark SENT (bao gồm cả idempotency thành công)
         event.markSent();
         outboxRepo.save(event);
 
@@ -242,57 +253,25 @@ public void processOne(OutboxEvent event) {
         log.info("[COIN_REFUND] COMPLETED: {} coins → userId={}, booking={}",
                 dto.getCoinRefundAmount(), dto.getUserId(), dto.getBookingCode());
 
-    } catch (FeignException.Conflict e) {
-        // [409] operationKey đã tồn tại trong IAM → đã cộng xu rồi, mark SENT
-        log.warn("[COIN_REFUND] Duplicate operationKey for event={}, marking SENT (already credited)",
-                event.getIdempotencyKey());
-        event.markSent();
-        outboxRepo.save(event);
-
-        // ← THÊM
-        BookingEventDTO dto = parseDto(event);
-        if (dto != null) {
-            bookingRepo.findByBookingCode(dto.getBookingCode()).ifPresent(b -> {
-                b.setCoinRefundStatus("COMPLETED");
-                bookingRepo.save(b);
-            });
-        }
-
     } catch (Exception e) {
-        // [FAIL] Lỗi khác → retry hoặc DEAD
+        // [FAIL] IAM ném exception → retry hoặc DEAD
         log.error("Coin refund failed for event {}: {}", event.getIdempotencyKey(), e.getMessage());
         event.incrementRetries(e.getMessage());
         outboxRepo.save(event);
 
         if (event.getStatus() == OutboxStatus.DEAD) {
-            // ← THÊM: log đầy đủ để admin grep
-            BookingEventDTO dto = parseDto(event);
-            String bookingCode = (dto != null) ? dto.getBookingCode() : "unknown";
-            String userId      = (dto != null) ? String.valueOf(dto.getUserId()) : "unknown";
-            String amount      = (dto != null) ? String.valueOf(dto.getCoinRefundAmount()) : "unknown";
-
             log.error("[DEAD] COIN_REFUND event={} booking={} userId={} amount={}",
-                    event.getIdempotencyKey(), bookingCode, userId, amount);
+                    event.getIdempotencyKey(), dto.getBookingCode(),
+                    dto.getUserId(), dto.getCoinRefundAmount());
 
             // ← THÊM: cập nhật booking
-            if (dto != null) {
-                bookingRepo.findByBookingCode(dto.getBookingCode()).ifPresent(b -> {
-                    b.setCoinRefundStatus("FAILED");
-                    bookingRepo.save(b);
-                });
-            }
+            bookingRepo.findByBookingCode(dto.getBookingCode()).ifPresent(b -> {
+                b.setCoinRefundStatus("FAILED");
+                bookingRepo.save(b);
+            });
         }
     }
 }
-
-// Helper — parse payload, trả null nếu lỗi (không throw để không che exception gốc)
-private BookingEventDTO parseDto(OutboxEvent event) {
-    try {
-        return objectMapper.readValue(event.getPayload(), BookingEventDTO.class);
-    } catch (Exception ex) {
-        log.error("Cannot parse payload for event {}", event.getIdempotencyKey());
-        return null;
-    }
 }
 ```
 
@@ -315,7 +294,7 @@ Page<OutboxEvent> findDeadEvents(Pageable pageable);
 
 ```java
 @RestController
-@RequestMapping("/api/admin/outbox")
+@RequestMapping("/api/bookings/admin/outbox")
 @RequiredArgsConstructor
 @Slf4j
 public class DeadEventAdminController {
@@ -348,7 +327,7 @@ public class DeadEventAdminController {
 
     /**
      * Reset tất cả DEAD (hoặc theo routingKey) về NEW.
-     * Ví dụ: POST /api/admin/outbox/retry-all?routingKey=booking.coin.refund
+     * Ví dụ: POST /api/bookings/admin/outbox/retry-all?routingKey=booking.coin.refund
      */
     @PostMapping("/retry-all")
     public ResponseEntity<Map<String, Integer>> retryAll(
@@ -454,10 +433,10 @@ dto._coinRefundStatus = data.coinRefundStatus ?? null;
 
 ### 3.11 `TransactionDetailModal.jsx` — 2 section mới
 
-#### Section A — Trạng thái hoàn xu (khi paidByCoin > 0)
+#### Section A — Trạng thái hoàn xu (khi coinRefundAmount > 0 && userId != null)
 
 ```jsx
-{booking.paidByCoin > 0 && (
+{booking.coinRefundAmount > 0 && booking.userId != null && (
     <div className={styles.coinRefundSection}>
         <h4>🪙 Hoàn xu</h4>
         {booking.coinRefundStatus === 'PENDING' && (
@@ -561,7 +540,7 @@ CREATE INDEX IF NOT EXISTS idx_outbox_dead
 ### Test 1 — Happy path: cancel booking có xu, IAM bình thường
 
 ```
-1. POST /api/bookings/{id}/cancel (booking có paidByCoin > 0)
+1. POST /api/bookings/{id}/cancel (booking có coinRefundAmount > 0 && userId != null)
    ✓ response.bookingStatus   = CANCELLED
    ✓ response.coinRefundStatus = PENDING
 
@@ -599,33 +578,44 @@ CREATE INDEX IF NOT EXISTS idx_outbox_dead
 1. Có DEAD event từ Test 2
 2. Bật iam-service lại
 
-3. GET /api/admin/outbox/dead/count
+3. GET /api/bookings/admin/outbox/dead/count
    ✓ { coinRefund: 1, notification: 0, total: 1 }
 
-4. POST /api/admin/outbox/retry/{id}
+4. POST /api/bookings/admin/outbox/retry/{id}
    ✓ 200 OK
 
 5. Chờ ≤ 5s
    GET /api/bookings/{id}
    ✓ coinRefundStatus = COMPLETED
-   GET /api/admin/outbox/dead/count
+   GET /api/bookings/admin/outbox/dead/count
    ✓ { total: 0 }
    ✓ IAM user balance tăng đúng
 ```
 
-### Test 4 — retry-all không cộng trùng (idempotency)
+### Test 4 — retry-all chỉ reset DEAD, không đụng SENT; idempotency IAM
 
 ```
-1. Event đã SENT từ Test 3 (operationKey đã trong IAM coin_transactions)
+1. Tạo 2 booking khác nhau có xu, tắt IAM, cancel cả 2
+   → 2 DEAD events, coinRefundStatus = FAILED
 
-2. POST /api/admin/outbox/retry-all?routingKey=booking.coin.refund
-   ✓ { retried: 1 }  (event được reset NEW vì đã SENT không phải DEAD → thực ra sẽ retried: 0)
-   → Thực ra Test 4 nên dùng event DEAD mới chưa xử lý, gọi retry-all,
-     rồi verify IAM chỉ cộng 1 lần khi có 409
+2. Bật IAM lại
 
-3. Scheduler chạy → IAM trả 409 → processOne() bắt FeignException.Conflict → markSent()
-   ✓ outbox SENT, coinRefundStatus COMPLETED
-   ✓ IAM balance KHÔNG thay đổi lần 2
+3. POST /api/bookings/admin/outbox/retry-all?routingKey=booking.coin.refund
+   ✓ { retried: 2 }  — chỉ DEAD events bị reset về NEW; SENT events không bị đụng
+
+4. Chờ scheduler (≤ 5s)
+   ✓ Cả 2 outbox → SENT
+   ✓ Cả 2 booking.coinRefundStatus = COMPLETED
+   ✓ IAM balance tăng đúng số xu mỗi user
+
+5. Gọi retry-all lần 2:
+   POST /api/bookings/admin/outbox/retry-all?routingKey=booking.coin.refund
+   ✓ { retried: 0 }  — không còn DEAD event, không có gì bị reset
+
+6. Idempotency: nếu scheduler crash giữa chừng (outbox chưa SENT nhưng IAM đã credit),
+   admin retry → scheduler gọi IAM lại với cùng operationKey
+   → IAM xử lý idempotency nội bộ (coin_transactions UNIQUE operationKey)
+   → Không ném exception → outbox SENT bình thường → balance không cộng lần 2
 ```
 
 ### Test 5 — RabbitMQ down: notification outbox retry, tự phục hồi

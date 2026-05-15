@@ -2,6 +2,8 @@ package com.tourism.booking.repository;
 
 import com.tourism.booking.entity.OutboxEvent;
 import com.tourism.booking.entity.OutboxStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -34,6 +36,13 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
 
     /** Used in tests / monitoring */
     List<OutboxEvent> findByStatus(OutboxStatus status);
+
+    /** Dùng cho Admin API: list DEAD events theo routingKey */
+    List<OutboxEvent> findByStatusAndRoutingKey(OutboxStatus status, String routingKey);
+
+    /** Dùng cho Admin API: paginated DEAD list, mới nhất lên trước */
+    @Query("SELECT o FROM OutboxEvent o WHERE o.status = 'DEAD' ORDER BY o.createdAt DESC")
+    Page<OutboxEvent> findDeadEvents(Pageable pageable);
 
     boolean existsByIdempotencyKey(String idempotencyKey);
 

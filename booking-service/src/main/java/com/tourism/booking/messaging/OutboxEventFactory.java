@@ -50,6 +50,8 @@ public final class OutboxEventFactory {
                 .exchange(RabbitMQConfig.EXCHANGE)  // stored but not used by coin relay
                 .routingKey(RabbitMQConfig.RK_COIN_REFUND)
                 .payload(toJson(dto, mapper))
+                .maxRetries(20)         // coin refund needs more retry chances than notification
+                .maxBackoffSecs(3600L)  // cap at 1 hour per attempt (~15h total grace period)
                 .build();
     }
 

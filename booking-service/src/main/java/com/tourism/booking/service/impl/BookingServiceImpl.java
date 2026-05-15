@@ -137,17 +137,20 @@ public class BookingServiceImpl implements BookingService {
         // ── ATOMIC: save booking + outbox events in ONE transaction ───────────
         booking.setBookingStatus(BookingStatus.CANCELLED);
         booking.setRefundAmount(refundableAmount);
+
+        // Set coinRefundStatus = PENDING khi có coin refund (cùng transaction với outbox)
+        if (coinRefundAmount.compareTo(BigDecimal.ZERO) > 0 && booking.getUserId() != null) {
+            booking.setCoinRefundStatus("PENDING");
+        }
+
         Booking saved = bookingRepository.save(booking);
         BookingResponse res = toResponse(saved);
 
         // Outbox: COIN_REFUND (relay via Feign to IAM — idempotent via coin_transactions)
         if (coinRefundAmount.compareTo(BigDecimal.ZERO) > 0 && saved.getUserId() != null) {
-            BookingEventDTO coinDto = BookingEventDTO.builder()
-                    .bookingID(saved.getBookingID())
-                    .bookingCode(saved.getBookingCode())
-                    .userId(saved.getUserId())
-                    .coinRefundAmount(coinRefundAmount)
-                    .build();
+            BookingEventDTO coinDto = buildBaseEventDto(saved, res, "CANCELLED",
+                    refundableAmount, null, null, null, request.getCancelReason());
+            coinDto.setCoinRefundAmount(coinRefundAmount);
             outboxRepository.save(OutboxEventFactory.coinRefund(coinDto, objectMapper));
             log.info("Queued COIN_REFUND outbox: {} coins for userId={}, booking={}",
                     coinRefundAmount, saved.getUserId(), saved.getBookingCode());
@@ -354,14 +357,20 @@ public class BookingServiceImpl implements BookingService {
                         .contains(currentStatus);
 
                 if (requiresSepayCheck) {
-                    // Tính số tiền cần verify: admin cancel = full, không trừ phí
+                    // Tính số tiền cần verify:
+                    // - PENDING_REFUND: giữ nguyên refundAmount user đã request, không tính lại full
+                    // - PAID / PENDING_CONFIRMATION: admin tự hủy trực tiếp → hoàn full
                     BigDecimal totalPrice0 = booking.getTotalPrice() != null ? booking.getTotalPrice() : BigDecimal.ZERO;
                     BigDecimal paidByCoin0 = booking.getPaidByCoin() != null ? booking.getPaidByCoin() : BigDecimal.ZERO;
                     BigDecimal expectedAmount = totalPrice0.add(paidByCoin0);
 
                     // Nếu PENDING_REFUND đã có refundAmount lưu sẵn thì dùng luôn
-                    if ("PENDING_REFUND".equals(currentStatus) && booking.getRefundAmount() != null
-                            && booking.getRefundAmount().compareTo(BigDecimal.ZERO) > 0) {
+                    if ("PENDING_REFUND".equals(currentStatus)) {
+                        if (booking.getRefundAmount() == null
+                                || booking.getRefundAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                            throw new RuntimeException(
+                                    "Không tìm thấy số tiền hoàn đã lưu cho yêu cầu hoàn tiền.");
+                        }
                         expectedAmount = booking.getRefundAmount();
                     }
 
@@ -402,18 +411,26 @@ public class BookingServiceImpl implements BookingService {
                 booking.setBookingStatus(BookingStatus.CANCELLED);
                 booking.setCancelReason(request.getCancelReason());
 
-                // Calculate refund amount (full paid amount — no cancellation fee for admin path)
-                BigDecimal refundAmount = BigDecimal.ZERO;
-                boolean hasRefund = List.of("PENDING_CONFIRMATION", "PAID", "PENDING_REFUND")
-                        .contains(currentStatus);
+                BigDecimal refundAmount = booking.getRefundAmount() != null
+                        ? booking.getRefundAmount() : BigDecimal.ZERO;
 
-                if (hasRefund) {
+                if ("PENDING_REFUND".equals(currentStatus)) {
+                    // User đã gửi yêu cầu hoàn tiền ngân hàng: refundAmount đã được tính và lưu
+                    // ở submitRefundRequest(). Admin chỉ xác nhận đã chuyển khoản, không overwrite.
+                    if (refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                        throw new RuntimeException(
+                                "Không tìm thấy số tiền hoàn đã lưu cho yêu cầu hoàn tiền.");
+                    }
+                } else if (List.of("PENDING_CONFIRMATION", "PAID").contains(currentStatus)) {
+                    // Admin tự hủy trực tiếp: hoàn full số khách đã thanh toán + điểm đã dùng.
                     BigDecimal totalPrice = booking.getTotalPrice() != null
                             ? booking.getTotalPrice() : BigDecimal.ZERO;
                     BigDecimal paidByCoin = booking.getPaidByCoin() != null
                             ? booking.getPaidByCoin() : BigDecimal.ZERO;
                     refundAmount = totalPrice.add(paidByCoin);
                     booking.setRefundAmount(refundAmount);
+                } else {
+                    refundAmount = BigDecimal.ZERO;
                 }
 
                 Booking saved = bookingRepository.save(booking);

@@ -63,6 +63,11 @@ public class OutboxEvent {
     @Builder.Default
     private int maxRetries = 5;
 
+    /** Maximum backoff per retry attempt in seconds (default 1 hour = 3600s) */
+    @Column(name = "max_backoff_secs", nullable = false, columnDefinition = "bigint not null default 3600")
+    @Builder.Default
+    private long maxBackoffSecs = 3600L;
+
     /** Hostname:PID of the scheduler instance holding the lock */
     @Column(name = "locked_by", length = 150)
     private String lockedBy;
@@ -93,7 +98,10 @@ public class OutboxEvent {
         if (this.retries >= this.maxRetries) {
             this.status = OutboxStatus.DEAD;
         } else {
-            long backoffSecs = (long) Math.pow(2, this.retries) * 30L;
+            long backoffSecs = Math.min(
+                (long) Math.pow(2, this.retries) * 30L,
+                this.maxBackoffSecs   // cap: never exceed maxBackoffSecs per attempt
+            );
             this.nextRetryAt = LocalDateTime.now().plusSeconds(backoffSecs);
             this.status = OutboxStatus.NEW;
         }
