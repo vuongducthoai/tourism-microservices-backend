@@ -67,4 +67,15 @@ public class User extends BaseEntity {
     private LocalDateTime verificationTokenExpiry;
 
     private LocalDateTime lastActiveAt;
+
+    @Column(name = "keycloak_id")
+    private String keycloakId; // ID của user trong keycloak (UUID dang String)
+
+    /*
+        // Flag masked user is already created in Keycloak 
+        // false = user old(only have in iam_db, already sync Keycloak)
+        // true = It's already in both iam_db and Keycloak.
+    */
+    @Column(name = "migrated_to_keycloak")
+    private Boolean migratedToKeycloak = false; 
 }

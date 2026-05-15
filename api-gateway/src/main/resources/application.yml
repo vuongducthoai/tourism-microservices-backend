@@ -150,6 +150,12 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism
+          jwk-set-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism/protocol/openid-connect/certs
 
 springdoc:
   swagger-ui:
@@ -177,11 +183,11 @@ eureka:
     service-url:
       defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
 
-jwt:
-  secret: ${JWT_SECRET:59379ea8-777d-49e1-ac8e-03420874f6a3}
-
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,gateway
+        include: health,info,gateway,routes
+  endpoint:
+    gateway:
+      enabled: true

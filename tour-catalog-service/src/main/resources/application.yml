@@ -5,7 +5,7 @@ spring:
   application:
     name: tour-catalog-service
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/tour_catalog_db}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/tour_catalog_db}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
@@ -35,11 +35,18 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:tourism}
     password: ${RABBITMQ_PASSWORD:tourism123}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism
+          jwk-set-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism/protocol/openid-connect/certs
 
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:dnt8vx1at}
   api-key: ${CLOUDINARY_API_KEY:939641688935771}
   api-secret: ${CLOUDINARY_API_SECRET:WPzZSJqg4MVvHKUuvPFeHL981J0}
+
 
 app:
   upload:

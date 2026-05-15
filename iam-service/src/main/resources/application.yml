@@ -7,7 +7,7 @@ spring:
 
   # ─── Database ───
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/iam_db}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/iam_db}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
@@ -41,23 +41,6 @@ spring:
         timeout: 5000
         writetimeout: 5000
 
-  # ─── OAuth2 ───
-  security:
-    oauth2:
-      client:
-        registration:
-          google:
-            client-id: ${GOOGLE_CLIENT_ID:your-google-client-id}
-            client-secret: ${GOOGLE_CLIENT_SECRET:your-google-secret}
-            scope: profile,email
-            redirect-uri: "{baseUrl}/api/auth/google/callback"
-        provider:
-          google:
-            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
-            token-uri: https://oauth2.googleapis.com/token
-            user-info-uri: https://www.googleapis.com/oauth2/v3/userinfo
-            user-name-attribute: sub
-
   # ─── Redis ───
   data:
     redis:
@@ -72,17 +55,27 @@ spring:
     username: ${RABBITMQ_USERNAME:tourism}
     password: ${RABBITMQ_PASSWORD:tourism123}
 
-# ─── JWT Config ───
-jwt:
-  secret: ${JWT_SECRET:59379ea8-777d-49e1-ac8e-03420874f6a3}
-  access-token-expiration: 604800000   # 7 days
-  refresh-token-expiration: 1209600000 # 14 days
+  # ─── OAuth2 Resource Server (validate Keycloak JWT) ───
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism
+          jwk-set-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism/protocol/openid-connect/certs
 
 # ─── Cloudinary ───
 cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:dnt8vx1at}
   api-key: ${CLOUDINARY_API_KEY:939641688935771}
   api-secret: ${CLOUDINARY_API_SECRET:WPzZSJqg4MVvHKUuvPFeHL981J0}
+
+keycloak:
+  server-url: ${KEYCLOAK_SERVER_URL:http://localhost:8180}
+  realm: ${KEYCLOAK_REALM:tourism}
+  client-id: ${KEYCLOAK_CLIENT_ID:tourism-app}
+  client-secret: ${KEYCLOAK_CLIENT_SECRET:tourism-app-secret}
+  admin-username: ${KEYCLOAK_ADMIN_USERNAME:admin}
+  admin-password: ${KEYCLOAK_ADMIN_PASSWORD:admin}
 
 # ─── Eureka ───
 eureka:
@@ -111,3 +104,5 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+
