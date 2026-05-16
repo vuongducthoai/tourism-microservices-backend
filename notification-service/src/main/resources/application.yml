@@ -59,6 +59,8 @@ management:
       enabled: false
     redis:
       enabled: false
+    rabbit:
+      enabled: false
 
 app:
   admin:

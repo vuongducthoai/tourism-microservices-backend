@@ -2,7 +2,9 @@ package com.tourism.notification.controller;
 
 import com.tourism.notification.dto.BookingEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
+import com.tourism.notification.dto.VerificationEmailRequest;
 import com.tourism.notification.service.NotificationService;
+import com.tourism.notification.service.MailService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class NotificationController {
 
     private final NotificationService notificationService;
+    private final MailService mailService;
 
     @Operation(summary = "[Internal] Yêu cầu hoàn tiền", description = "booking-service gọi khi khách hàng gửi yêu cầu hoàn tiền. Gửi email thông báo cho admin")
     @ApiResponse(responseCode = "200", description = "Xử lý thành công")
@@ -51,6 +54,15 @@ public class NotificationController {
     @PostMapping("/user-status-updated")
     public ResponseEntity<Void> userStatusUpdated(@RequestBody UserStatusEventDTO event) {
         notificationService.handleUserStatusUpdated(event);
+        return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[Internal] Gửi email xác thực tài khoản",
+               description = "iam-service gọi khi user đăng ký hoặc yêu cầu gửi lại email xác thực")
+    @ApiResponse(responseCode = "200", description = "Email được gửi thành công")
+    @PostMapping("/send-verification-email")
+    public ResponseEntity<Void> sendVerificationEmail(@RequestBody VerificationEmailRequest request) {
+        mailService.sendVerificationEmail(request);
         return ResponseEntity.ok().build();
     }
 }
