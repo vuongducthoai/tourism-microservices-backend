@@ -148,21 +148,21 @@ public class MailServiceImpl implements MailService {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setFrom(fromEmail);
             msg.setTo(event.getContactEmail());
-            msg.setSubject("THONG BAO HUY TOUR: Booking Code " + nvl(event.getBookingCode()));
+            msg.setSubject("THÔNG BÁO HỦY TOUR: Booking Code " + nvl(event.getBookingCode()));
 
             String body = String.format(
-                    "Kinh gui Quy khach %s,\n\n" +
-                    "Tour cua Quy khach da bi huy.\n\n" +
-                    "--- THONG TIN BOOKING ---\n" +
-                    "Ma Booking  : %s\n" +
-                    "Ten Tour    : %s\n" +
-                    "Ma Tour     : %s\n" +
-                    "Ngay khoi hanh: %s\n" +
-                    "Trang thai  : Da huy\n\n" +
-                    "--- LY DO HUY ---\n" +
+                    "Kính gửi Quý khách %s,\n\n" +
+                    "Tour của Quý khách đã bị hủy.\n\n" +
+                    "--- THÔNG TIN BOOKING ---\n" +
+                    "Mã Booking    : %s\n" +
+                    "Tên Tour      : %s\n" +
+                    "Mã Tour       : %s\n" +
+                    "Ngày khởi hành: %s\n" +
+                    "Trạng thái    : Đã hủy\n\n" +
+                    "--- LÝ DO HỦY ---\n" +
                     "%s\n\n" +
-                    "Neu co thac mac, vui long lien he: %s\n\n" +
-                    "Tran trong,\nFuture Travel Team",
+                    "Nếu có thắc mắc, vui lòng liên hệ: %s\n\n" +
+                    "Trân trọng,\nFuture Travel Team",
                     nvl(event.getContactFullName()),
                     nvl(event.getBookingCode()),
                     nvl(event.getTourName()),
@@ -193,30 +193,30 @@ public class MailServiceImpl implements MailService {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setFrom(fromEmail);
             msg.setTo(event.getContactEmail());
-            msg.setSubject("THONG BAO HUY TOUR VA HOAN TIEN: Booking Code " + nvl(event.getBookingCode()));
+            msg.setSubject("THÔNG BÁO HỦY TOUR VÀ HOÀN TIỀN: Booking Code " + nvl(event.getBookingCode()));
 
             BigDecimal refund = event.getRefundAmount() != null ? event.getRefundAmount() : BigDecimal.ZERO;
             BigDecimal paidByCoin = event.getPaidByCoin() != null ? event.getPaidByCoin() : BigDecimal.ZERO;
             String refundAccountInfo = buildRefundAccountInfo(event);
 
             String body = String.format(
-                    "Kinh gui Quy khach %s,\n\n" +
-                    "Tour cua Quy khach da bi huy va he thong da ghi nhan thong tin hoan tien.\n\n" +
-                    "--- THONG TIN BOOKING ---\n" +
-                    "Ma Booking  : %s\n" +
-                    "Ten Tour    : %s\n" +
-                    "Ma Tour     : %s\n" +
-                    "Ngay khoi hanh: %s\n" +
-                    "Trang thai  : Da huy\n\n" +
-                    "--- LY DO HUY ---\n" +
+                    "Kính gửi Quý khách %s,\n\n" +
+                    "Tour của Quý khách đã bị hủy và hệ thống đã ghi nhận thông tin hoàn tiền.\n\n" +
+                    "--- THÔNG TIN BOOKING ---\n" +
+                    "Mã Booking    : %s\n" +
+                    "Tên Tour      : %s\n" +
+                    "Mã Tour       : %s\n" +
+                    "Ngày khởi hành: %s\n" +
+                    "Trạng thái    : Đã hủy\n\n" +
+                    "--- LÝ DO HỦY ---\n" +
                     "%s\n\n" +
-                    "--- THONG TIN HOAN TIEN ---\n" +
-                    "So tien hoan: %s\n" +
-                    "Gia tri diem ca nhan da dung duoc tinh vao hoan: %s\n" +
+                    "--- THÔNG TIN HOÀN TIỀN ---\n" +
+                    "Số tiền hoàn: %s\n" +
+                    "Giá trị điểm cá nhân đã dùng được tính vào hoàn: %s\n" +
                     "%s\n\n" +
-                    "So tien hoan la so cuoi cung he thong ghi nhan trong don, bao gom gia tri diem ca nhan neu don co su dung.\n\n" +
-                    "Neu co thac mac, vui long lien he: %s\n\n" +
-                    "Tran trong,\nFuture Travel Team",
+                    "Số tiền hoàn là số cuối cùng hệ thống ghi nhận trong đơn, bao gồm giá trị điểm cá nhân nếu đơn có sử dụng.\n\n" +
+                    "Nếu có thắc mắc, vui lòng liên hệ: %s\n\n" +
+                    "Trân trọng,\nFuture Travel Team",
                     nvl(event.getContactFullName()),
                     nvl(event.getBookingCode()),
                     nvl(event.getTourName()),
@@ -308,12 +308,12 @@ public class MailServiceImpl implements MailService {
         if (!hasText(event.getRefundBank())
                 && !hasText(event.getRefundAccountNumber())
                 && !hasText(event.getRefundAccountName())) {
-            return "Thong tin tai khoan hoan tien: Chua cung cap";
+            return "Thông tin tài khoản hoàn tiền: Chưa cung cấp";
         }
         return String.format(
-                "Ngan hang   : %s\n" +
-                "So tai khoan: %s\n" +
-                "Chu tai khoan: %s",
+                "Ngân hàng    : %s\n" +
+                "Số tài khoản : %s\n" +
+                "Chủ tài khoản: %s",
                 nvl(event.getRefundBank()),
                 nvl(event.getRefundAccountNumber()),
                 nvl(event.getRefundAccountName())
