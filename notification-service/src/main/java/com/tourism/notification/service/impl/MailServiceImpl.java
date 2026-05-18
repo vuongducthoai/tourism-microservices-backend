@@ -339,6 +339,8 @@ public class MailServiceImpl implements MailService {
             log.error("Failed to send verification email to {}: {}",
                     request.getEmail(), e.getMessage());
         }
+    }
+
     private String buildRefundAccountInfo(BookingEventDTO event) {
         if (!hasText(event.getRefundBank())
                 && !hasText(event.getRefundAccountNumber())
