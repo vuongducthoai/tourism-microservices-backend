@@ -17,10 +17,14 @@ public interface UserRepository extends JpaRepository<User, Integer>, UserReposi
 
     Optional<User> findByEmail(String email);
 
+    boolean existsByEmail(String email);
+
     boolean existsByEmailAndUserIDNot(String email, Integer userId);
 
     boolean existsByPhoneAndUserIDNot(String phone, Integer userId);
 
+    Optional<User> findByVerificationToken(String token);
+    
     @Modifying
     @Transactional
     @Query("UPDATE User u SET u.lastActiveAt = :lastActiveAt WHERE u.email = :email")

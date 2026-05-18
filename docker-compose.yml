@@ -1,17 +1,6 @@
 version: '3.8'
 
-# ============================================================
-# Tourism Microservices - Docker Compose
-# ============================================================
-# Chạy: docker-compose up -d
-# Dừng: docker-compose down
-# Xem logs: docker-compose logs -f <service-name>
-# ============================================================
-
 services:
-
-  # ======================== INFRASTRUCTURE ========================
-
   # --- PostgreSQL ---
   postgres:
     image: postgres:16-alpine
@@ -28,7 +17,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,10 +33,50 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - tourism-network
+
+  # --- Keycloak (Identity Provider) ---
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.5
+    container_name: tourism-keycloak
+    # start-dev: chế độ development (HTTP, log chi tiết, hot reload theme)
+    # --import-realm: tự động import realm-export.json khi khởi động lần đầu
+    command: start-dev --import-realm
+    environment:
+      # Dùng chung PostgreSQL container, chỉ khác database keycloak_db
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      # Tài khoản đăng nhập Keycloak Admin Console (http://localhost:8180)
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # Cho phép HTTP, không bắt HTTPS (dev only)
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      # Google OAuth2 Configuration
+      GOOGLE_CLIENT_ID: "YOUR_GOOGLE_CLIENT_ID"
+      GOOGLE_CLIENT_SECRET: "YOUR_GOOGLE_CLIENT_SECRET"
+    ports:
+      # Truy cập Admin Console: http://localhost:8180
+      - "8180:8080"
+    volumes:
+      # realm-export.json chứa cấu hình realm tourism (client, roles, mappers)
+      - ./docker/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
     networks:
       - tourism-network
 
@@ -64,7 +93,7 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      test: [ "CMD", "rabbitmq-diagnostics", "check_running" ]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -86,7 +115,7 @@ services:
       - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - EUREKA_HOST=service-discovery
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8761/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8761/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -110,7 +139,7 @@ services:
       service-discovery:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8888/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -137,7 +166,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -164,6 +193,14 @@ services:
       - EUREKA_HOST=service-discovery
       - REDIS_HOST=redis
       - RABBITMQ_HOST=rabbitmq
+      
+      # Keycloak connection 
+      - KEYCLOAK_SERVER_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=tourism
+      - KEYCLOAK_CLIENT_ID=tourism-app
+      - KEYCLOAK_CLIENT_SECRET=tourism-app-secret
+      - KEYCLOAK_ADMIN_USERNAME=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
     depends_on:
       service-discovery:
         condition: service_healthy
@@ -173,8 +210,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      keycloak:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8081/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -209,7 +248,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8082/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -244,7 +283,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8083/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8083/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -276,7 +315,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8084/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8084/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -311,7 +350,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8085/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8085/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -352,7 +391,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8086/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8086/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -384,7 +423,7 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8087/actuator/health"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8087/actuator/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -400,6 +439,8 @@ volumes:
   redis_data:
     driver: local
   rabbitmq_data:
+    driver: local
+  keycloak_data:
     driver: local
 
 networks:

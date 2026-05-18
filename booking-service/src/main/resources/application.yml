@@ -5,7 +5,7 @@ spring:
   application:
     name: booking-service
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/booking_db}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/booking_db}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
@@ -27,6 +27,13 @@ spring:
     password: ${RABBITMQ_PASSWORD:tourism123}
     publisher-confirm-type: correlated
     publisher-returns: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism
+          jwk-set-uri: ${KEYCLOAK_SERVER_URL:http://localhost:8180}/realms/tourism/protocol/openid-connect/certs
+
 
 eureka:
   client:

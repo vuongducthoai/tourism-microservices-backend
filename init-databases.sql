@@ -6,6 +6,7 @@
 -- Database cho IAM Service (User, Auth, JWT)
 CREATE DATABASE iam_db;
 
+
 -- Database cho Tour Catalog Service (Tour, Location, Departure, Review)
 CREATE DATABASE tour_catalog_db;
 
@@ -27,4 +28,4 @@ CREATE DATABASE analytics_db;
 -- ============================================================
 -- Verify databases created
 -- ============================================================
-\l
+
