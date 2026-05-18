@@ -72,6 +72,9 @@ public class BookingConverter {
             res.setRefundStatus(ri.getRefundStatus());
         }
 
+        // Manual: coin refund status
+        res.setCoinRefundStatus(booking.getCoinRefundStatus());
+
         return res;
     }
 

@@ -20,7 +20,7 @@ public interface UserService {
     /**
      * Add coins to user's coin balance (called by booking-service via Feign after coin-refund cancellation).
      */
-    void addCoins(Integer userId, java.math.BigDecimal amount);
+    void addCoins(Integer userId, java.math.BigDecimal amount, String operationKey);
 
     /**
      * Deduct coins from user's coin balance (called by booking-service via Feign when points are redeemed).

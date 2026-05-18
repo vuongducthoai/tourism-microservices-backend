@@ -48,6 +48,23 @@ public class BookingEventDTO implements Serializable {
     // Coin refund info (coin-path)
     private BigDecimal coinRefundAmount;
 
+    /** Idempotency key passed through for coin relay */
+    private String  coinRefundOperationKey;
+
     // User reference
     private Integer userId;
+
+    // ── RabbitMQ routing fields ──────────────────────────────────────────────
+
+    /**
+     * Discriminator used by BookingEventListener to dispatch to the right handler.
+     * Values: BOOKING_CONFIRMED | STATUS_UPDATED | REFUND_REQUESTED | REFUND_COMPLETED
+     */
+    private String  eventType;
+
+    /**
+     * Globally unique key = bookingCode_eventType_epochMs.
+     * Checked before processing to guarantee idempotency (stored in processed_events table).
+     */
+    private String  idempotencyKey;
 }

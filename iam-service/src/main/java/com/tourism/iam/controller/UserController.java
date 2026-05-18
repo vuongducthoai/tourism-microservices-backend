@@ -67,9 +67,10 @@ public class UserController {
     @PostMapping("/{userID}/coins")
     public ResponseEntity<Void> addCoins(
             @PathVariable Integer userID,
-            @RequestParam BigDecimal amount
+            @RequestParam BigDecimal amount,
+            @RequestParam(required = false) String operationKey
     ) {
-        userService.addCoins(userID, amount);
+        userService.addCoins(userID, amount, operationKey);
         return ResponseEntity.ok().build();
     }
 

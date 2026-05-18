@@ -25,6 +25,8 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:tourism}
     password: ${RABBITMQ_PASSWORD:tourism123}
+    publisher-confirm-type: correlated
+    publisher-returns: true
   security:
     oauth2:
       resourceserver:
@@ -71,3 +73,10 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+rabbitmq:
+  management:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_MANAGEMENT_PORT:15672}
+    username: ${RABBITMQ_USERNAME:tourism}
+    password: ${RABBITMQ_PASSWORD:tourism123}

@@ -10,6 +10,7 @@ import com.tourism.iam.dto.response.UserAdminResponse;
 import com.tourism.iam.dto.response.UserDetailResponse;
 import com.tourism.iam.entity.User;
 import com.tourism.iam.feign.NotificationFeignClient;
+import com.tourism.iam.repository.CoinTransactionRepository;
 import com.tourism.iam.repository.UserRepository;
 import com.tourism.iam.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -35,8 +36,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
 
-    private final UserRepository          userRepository;
-    private final Cloudinary              cloudinary;
+    private final UserRepository              userRepository;
+    private final CoinTransactionRepository   coinTransactionRepository;
+    private final Cloudinary                  cloudinary;
     private final UserConverter           userConverter;
     private final NotificationFeignClient notificationFeignClient;
 
@@ -88,7 +90,12 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public void addCoins(Integer userId, java.math.BigDecimal amount) {
+    public void addCoins(Integer userId, java.math.BigDecimal amount, String operationKey) {
+        // Idempotency check: if this operationKey was already processed, skip
+        if (operationKey != null && coinTransactionRepository.existsByOperationKey(operationKey)) {
+            log.info("Skipping duplicate coin credit: operationKey={}", operationKey);
+            return;
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found: " + userId));
         java.math.BigDecimal current = user.getCoinBalance() != null
@@ -96,6 +103,15 @@ public class UserServiceImpl implements UserService {
                 : java.math.BigDecimal.ZERO;
         user.setCoinBalance(current.add(amount));
         userRepository.save(user);
+        // Record transaction for idempotency
+        if (operationKey != null) {
+            coinTransactionRepository.save(com.tourism.iam.entity.CoinTransaction.builder()
+                    .operationKey(operationKey)
+                    .userId(userId)
+                    .amount(amount)
+                    .direction("CREDIT")
+                    .build());
+        }
     }
 
     @Override

@@ -26,6 +26,8 @@ public interface BookingRepository extends JpaRepository<Booking, Integer>, Book
 
     List<Booking> findByUserIdAndBookingStatusOrderByBookingDateDesc(Integer userId, BookingStatus status);
 
+    java.util.Optional<Booking> findByBookingCode(String bookingCode);
+
     // ─── Dashboard stats queries ───
 
     @Query("SELECT SUM(b.totalPrice) FROM Booking b WHERE b.bookingStatus = :status AND (b.isDeleted = false OR b.isDeleted IS NULL)")
