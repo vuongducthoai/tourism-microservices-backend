@@ -1,0 +1,11 @@
+package com.tourism.forum.feign.dto;
+
+import lombok.Data;
+
+@Data
+public class UserBriefResponse {
+    private Integer userID;
+    private String fullName;
+    private String email;
+    private String avatar;
+}

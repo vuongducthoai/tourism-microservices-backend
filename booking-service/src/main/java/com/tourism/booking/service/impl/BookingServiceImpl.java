@@ -3,9 +3,13 @@ package com.tourism.booking.service.impl;
 import com.tourism.booking.dto.request.AdminSearchBookingRequest;
 import com.tourism.booking.dto.request.AdminUpdateStatusRequest;
 import com.tourism.booking.dto.request.CancelBookingRequest;
+import com.tourism.booking.dto.request.CreateBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
 import com.tourism.booking.dto.response.BookingBriefResponse;
+import com.tourism.booking.dto.response.BookingOrderResponse;
+import com.tourism.booking.dto.response.BookingPaymentDetailResponse;
 import com.tourism.booking.dto.response.BookingResponse;
+import com.tourism.booking.dto.response.CreateBookingResponse;
 import com.tourism.booking.entity.*;
 import com.tourism.booking.convert.BookingConverter;
 import com.tourism.booking.event.BookingEventDTO;
@@ -15,6 +19,9 @@ import com.tourism.booking.feign.PaymentFeignClient;
 import com.tourism.booking.feign.TourCatalogFeignClient;
 import com.tourism.booking.feign.dto.DepartureInfoResponse;
 import com.tourism.booking.feign.dto.PaymentInfoResponse;
+import com.tourism.booking.feign.dto.TourBookingInfoResponse;
+import com.tourism.booking.feign.dto.UserProfileResponse;
+import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.messaging.OutboxEventFactory;
 import com.tourism.booking.repository.BookingRepository;
 import com.tourism.booking.repository.OutboxEventRepository;
@@ -28,6 +35,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +44,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -46,6 +55,7 @@ public class BookingServiceImpl implements BookingService {
 
     private final BookingRepository           bookingRepository;
     private final RefundInformationRepository refundRepository;
+    private final CouponRepository            couponRepository;
     private final OutboxEventRepository       outboxRepository;
     private final TourCatalogFeignClient      tourCatalogClient;
     private final PaymentFeignClient          paymentClient;
@@ -56,6 +66,330 @@ public class BookingServiceImpl implements BookingService {
     private final ObjectMapper               objectMapper;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
+
+    // ── GET order info (for booking form) ────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public BookingOrderResponse getOrderInfo(String tourCode, Integer departureId) {
+        TourBookingInfoResponse info = tourCatalogClient.getOrderInfo(tourCode, departureId);
+
+        BookingOrderResponse res = new BookingOrderResponse();
+        res.setTourId(info.getTourId());
+        res.setTourCode(info.getTourCode());
+        res.setTourName(info.getTourName());
+        res.setImage(info.getImage());
+        res.setAvailableSlots(info.getAvailableSlots());
+        res.setAdultPrice(info.getAdultPrice());
+        res.setChildPrice(info.getChildPrice());
+        res.setToddlerPrice(info.getToddlerPrice());
+        res.setInfantPrice(info.getInfantPrice());
+        res.setSingleRoomSurcharge(info.getSingleRoomSurcharge());
+
+        // Map transport
+        if (info.getOutboundFlight() != null) {
+            res.setOutboundFlight(toFlightInfo(info.getOutboundFlight()));
+        }
+        if (info.getInboundFlight() != null) {
+            res.setInboundFlight(toFlightInfo(info.getInboundFlight()));
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // Resolve departure coupon
+        if (info.getCouponId() != null) {
+            try {
+                couponRepository.findActiveCouponById(info.getCouponId(), now)
+                        .ifPresent(c -> res.setDepartureCoupon(toCouponInfo(c)));
+            } catch (Exception e) {
+                log.warn("Could not resolve departure coupon {}: {}", info.getCouponId(), e.getMessage());
+            }
+        }
+
+        // Global coupons
+        List<BookingOrderResponse.CouponInfo> globals = couponRepository.findActiveCoupons(now)
+                .stream()
+                .filter(c -> CouponType.GLOBAL.equals(c.getCouponType()) && c.getDepartureId() == null)
+                .map(this::toCouponInfo)
+                .collect(Collectors.toList());
+        res.setGlobalCoupons(globals);
+
+        return res;
+    }
+
+    // ── CREATE booking ────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public CreateBookingResponse createBooking(CreateBookingRequest request) {
+        // 1. Lấy pricing + departure info từ tour-catalog
+        TourBookingInfoResponse info = tourCatalogClient.getOrderInfo(null, request.getDepartureId());
+
+        // 2. Đếm số ghế (không tính INFANT)
+        int seatCount = (int) request.getPassengers().stream()
+                .filter(p -> !"INFANT".equalsIgnoreCase(p.getType()))
+                .count();
+
+        // 3. Giảm chỗ trống (atomic — trả 400 nếu hết chỗ)
+        try {
+            ResponseEntity<Void> slotResp = tourCatalogClient.decreaseSlots(request.getDepartureId(), seatCount);
+            if (slotResp != null && slotResp.getStatusCode().is4xxClientError()) {
+                throw new RuntimeException("Không đủ chỗ trống!");
+            }
+        } catch (FeignException.BadRequest e) {
+            throw new RuntimeException("Không đủ chỗ trống!");
+        }
+
+        // 4. Tính subtotal + surcharge cho từng passenger
+        BigDecimal subTotal = BigDecimal.ZERO;
+        BigDecimal surcharge = BigDecimal.ZERO;
+        List<BookingPassenger> passengerEntities = new ArrayList<>();
+
+        Booking booking = new Booking();
+
+        for (CreateBookingRequest.PassengerRequest p : request.getPassengers()) {
+            BigDecimal price = getPriceByType(info, p.getType());
+            BigDecimal sr = p.isSingleRoom() && info.getSingleRoomSurcharge() != null
+                    ? info.getSingleRoomSurcharge() : BigDecimal.ZERO;
+            subTotal = subTotal.add(price);
+            surcharge = surcharge.add(sr);
+
+            BookingPassenger passenger = new BookingPassenger();
+            passenger.setFullName(p.getFullName());
+            passenger.setGender(p.getGender());
+            try {
+                passenger.setDateOfBirth(LocalDate.parse(p.getDateOfBirth()));
+            } catch (Exception e) {
+                throw new RuntimeException("Invalid dateOfBirth format: " + p.getDateOfBirth());
+            }
+            passenger.setPassengerType(toPassengerType(p.getType()));
+            passenger.setBasePrice(price);
+            passenger.setRequiresSingleRoom(p.isSingleRoom());
+            passenger.setSingleRoomSurcharge(sr);
+            passenger.setBooking(booking);
+            passengerEntities.add(passenger);
+        }
+
+        BigDecimal totalBeforeDiscount = subTotal.add(surcharge);
+
+        // 5. Apply coupons
+        BigDecimal couponDiscount = BigDecimal.ZERO;
+        List<String> appliedCodes = new ArrayList<>();
+        if (request.getCouponCode() != null) {
+            for (String code : request.getCouponCode()) {
+                if (code == null || code.isBlank()) continue;
+                Coupon c = couponRepository.findByCouponCode(code)
+                        .orElseThrow(() -> new RuntimeException("Coupon không tồn tại: " + code));
+                if (c.getMinOrderValue() != null
+                        && totalBeforeDiscount.compareTo(c.getMinOrderValue()) < 0) {
+                    throw new RuntimeException("Đơn hàng chưa đủ điều kiện dùng coupon " + code);
+                }
+                couponDiscount = couponDiscount.add(BigDecimal.valueOf(c.getDiscountAmount()));
+                c.setUsageCount(c.getUsageCount() + 1);
+                couponRepository.save(c);
+                appliedCodes.add(code);
+            }
+        }
+
+        // 6. Apply points/coins
+        BigDecimal pointDiscount = BigDecimal.ZERO;
+        if (request.getUserId() != null && request.getPointsUsed() != null && request.getPointsUsed() > 0) {
+            try {
+                UserProfileResponse userProfile = iamClient.getUserProfile(request.getUserId());
+                BigDecimal pointsToUse = BigDecimal.valueOf(request.getPointsUsed());
+                if (userProfile.getCoinBalance() == null
+                        || userProfile.getCoinBalance().compareTo(pointsToUse) < 0) {
+                    throw new RuntimeException("Không đủ điểm thưởng!");
+                }
+                pointDiscount = pointsToUse.multiply(COIN_RATE);
+                iamClient.deductCoins(request.getUserId(), pointsToUse);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                log.warn("Failed to deduct coins for user {}: {}", request.getUserId(), e.getMessage());
+            }
+        }
+
+        // 7. Tính finalTotal
+        BigDecimal finalTotal = totalBeforeDiscount.subtract(couponDiscount).subtract(pointDiscount);
+        if (finalTotal.compareTo(BigDecimal.ZERO) < 0) {
+            finalTotal = BigDecimal.ZERO;
+        }
+
+        // 8. Set booking fields
+        booking.setBookingDate(LocalDateTime.now());
+        booking.setBookingStatus(BookingStatus.PENDING_PAYMENT);
+        booking.setContactFullName(request.getContactFullName());
+        booking.setContactEmail(request.getContactEmail());
+        booking.setContactPhone(request.getContactPhone());
+        booking.setContactAddress(request.getContactAddress());
+        booking.setCustomerNote(request.getCustomerNote());
+        booking.setTotalPassengers(request.getPassengers().size());
+        booking.setSubtotalPrice(subTotal);
+        booking.setSurcharge(surcharge);
+        booking.setCouponDiscount(couponDiscount);
+        booking.setPaidByCoin(pointDiscount);
+        booking.setTotalPrice(finalTotal);
+        booking.setUserId(request.getUserId());
+        booking.setDepartureId(request.getDepartureId());
+        if (!appliedCodes.isEmpty()) {
+            booking.setAppliedCouponCodes(String.join(",", appliedCodes));
+        }
+        booking.setPassengers(passengerEntities);
+
+        bookingRepository.save(booking);
+        log.info("Created booking {} for departure {}", booking.getBookingCode(), request.getDepartureId());
+
+        return new CreateBookingResponse(
+                booking.getBookingCode(),
+                booking.getBookingID(),
+                finalTotal,
+                BookingStatus.PENDING_PAYMENT.name());
+    }
+
+    // ── Helper methods ────────────────────────────────────────────────────────
+
+    private BigDecimal getPriceByType(TourBookingInfoResponse info, String type) {
+        if (type == null) return BigDecimal.ZERO;
+        return switch (type.toUpperCase()) {
+            case "ADULT"             -> info.getAdultPrice() != null ? info.getAdultPrice() : BigDecimal.ZERO;
+            case "CHILD"             -> info.getChildPrice() != null ? info.getChildPrice() : BigDecimal.ZERO;
+            case "TODDLER"           -> info.getToddlerPrice() != null ? info.getToddlerPrice() : BigDecimal.ZERO;
+            case "INFANT"            -> info.getInfantPrice() != null ? info.getInfantPrice() : BigDecimal.ZERO;
+            default -> BigDecimal.ZERO;
+        };
+    }
+
+    private PassengerType toPassengerType(String type) {
+        if (type == null) return PassengerType.ADULT;
+        try {
+            return PassengerType.valueOf(type.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return PassengerType.ADULT;
+        }
+    }
+
+    private BookingOrderResponse.FlightInfo toFlightInfo(TourBookingInfoResponse.FlightInfo f) {
+        BookingOrderResponse.FlightInfo fi = new BookingOrderResponse.FlightInfo();
+        fi.setTransportCode(f.getTransportCode());
+        fi.setDepartTime(f.getDepartTime());
+        fi.setArrivalTime(f.getArrivalTime());
+        fi.setVehicleType(f.getVehicleType());
+        fi.setVehicleName(f.getVehicleName());
+        fi.setStartPoint(f.getStartPoint());
+        fi.setEndPoint(f.getEndPoint());
+        fi.setStartPointName(f.getStartPointName());
+        fi.setEndPointName(f.getEndPointName());
+        return fi;
+    }
+
+    private BookingOrderResponse.CouponInfo toCouponInfo(Coupon c) {
+        BookingOrderResponse.CouponInfo ci = new BookingOrderResponse.CouponInfo();
+        ci.setCode(c.getCouponCode());
+        ci.setDiscountAmount(c.getDiscountAmount());
+        ci.setDescription(c.getDescription());
+        ci.setMinOrderValue(c.getMinOrderValue());
+        return ci;
+    }
+
+    // ── GET booking payment detail (for payment-booking page) ───────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public BookingPaymentDetailResponse getBookingPaymentDetail(String bookingCode) {
+        Booking booking = bookingRepository.findByBookingCodeWithPassengers(bookingCode)
+                .orElseThrow(() -> new RuntimeException("Booking not found: " + bookingCode));
+
+        // Tour info from tour-catalog
+        TourBookingInfoResponse info = null;
+        try {
+            info = tourCatalogClient.getOrderInfo(null, booking.getDepartureId());
+        } catch (Exception e) {
+            log.warn("Could not fetch tour info for departure {}: {}", booking.getDepartureId(), e.getMessage());
+        }
+
+        // Duration from departure info
+        String duration = null;
+        try {
+            DepartureInfoResponse depInfo = tourCatalogClient.getDepartureInfo(booking.getDepartureId());
+            if (depInfo != null) duration = depInfo.getDuration();
+        } catch (Exception e) {
+            log.warn("Could not fetch departure info: {}", e.getMessage());
+        }
+
+        // Paid amount from payment-service
+        BigDecimal paidAmount = BigDecimal.ZERO;
+        try {
+            PaymentInfoResponse payment = paymentClient.getPaymentByBooking(booking.getBookingID());
+            if (payment != null && "SUCCESS".equals(payment.getStatus())) {
+                paidAmount = payment.getAmount();
+            }
+        } catch (Exception e) {
+            // No payment yet — ignore
+        }
+
+        BookingPaymentDetailResponse res = new BookingPaymentDetailResponse();
+        LocalDateTime createdAt = booking.getCreatedAt() != null
+                ? booking.getCreatedAt() : booking.getBookingDate();
+
+        res.setBookingId(booking.getBookingID());
+        res.setBookingCode(booking.getBookingCode());
+        res.setCreatedDate(createdAt != null ? createdAt.toString() : null);
+        res.setStatus(booking.getBookingStatus() != null ? booking.getBookingStatus().name() : null);
+        res.setOriginalPrice(booking.getTotalPrice());
+        res.setPaidAmount(paidAmount);
+        res.setRemainingAmount(booking.getTotalPrice().subtract(paidAmount));
+        res.setPaymentDeadline(createdAt != null ? createdAt.plusHours(24).toString() : null);
+
+        if (booking.getAppliedCouponCodes() != null && !booking.getAppliedCouponCodes().isBlank()) {
+            res.setAppliedCouponCodes(java.util.Arrays.asList(booking.getAppliedCouponCodes().split(",")));
+        } else {
+            res.setAppliedCouponCodes(java.util.List.of());
+        }
+
+        if (info != null) {
+            res.setTourName(info.getTourName());
+            res.setTourCode(info.getTourCode());
+            res.setTourImage(info.getImage());
+            if (info.getOutboundFlight() != null) {
+                res.setOutboundTransport(toPaymentFlightInfo(info.getOutboundFlight()));
+            }
+            if (info.getInboundFlight() != null) {
+                res.setInboundTransport(toPaymentFlightInfo(info.getInboundFlight()));
+            }
+        }
+        res.setDuration(duration);
+
+        if (booking.getPassengers() != null) {
+            res.setPassengers(booking.getPassengers().stream()
+                    .map(p -> {
+                        BookingPaymentDetailResponse.PassengerInfo pi = new BookingPaymentDetailResponse.PassengerInfo();
+                        pi.setFullName(p.getFullName());
+                        pi.setGender(p.getGender());
+                        pi.setDateOfBirth(p.getDateOfBirth() != null ? p.getDateOfBirth().toString() : null);
+                        pi.setType(p.getPassengerType() != null ? p.getPassengerType().name() : null);
+                        pi.setSingleRoom(Boolean.TRUE.equals(p.getRequiresSingleRoom()));
+                        return pi;
+                    })
+                    .collect(Collectors.toList()));
+        }
+
+        return res;
+    }
+
+    private BookingPaymentDetailResponse.FlightInfo toPaymentFlightInfo(TourBookingInfoResponse.FlightInfo f) {
+        BookingPaymentDetailResponse.FlightInfo fi = new BookingPaymentDetailResponse.FlightInfo();
+        fi.setVehicleType(f.getVehicleType());
+        fi.setDepartTime(f.getDepartTime());
+        fi.setArrivalTime(f.getArrivalTime());
+        fi.setTransportCode(f.getTransportCode());
+        fi.setStartPoint(f.getStartPoint());
+        fi.setStartPointName(f.getStartPointName());
+        fi.setEndPoint(f.getEndPoint());
+        fi.setEndPointName(f.getEndPointName());
+        fi.setVehicleName(f.getVehicleName());
+        return fi;
+    }
 
     // ── GET booking by ID (internal, for cross-service calls) ────────────────
 

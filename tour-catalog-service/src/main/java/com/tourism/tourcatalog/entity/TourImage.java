@@ -15,6 +15,9 @@ public class TourImage extends BaseEntity {
 
     private String imageUrl;
 
+    @Column(name = "is_main_image", nullable = false, columnDefinition = "boolean default false")
+    private Boolean isMainImage = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tour_id")
     private Tour tour;

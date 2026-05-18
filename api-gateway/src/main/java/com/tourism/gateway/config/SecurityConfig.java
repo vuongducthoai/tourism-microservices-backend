@@ -14,13 +14,17 @@ public class SecurityConfig {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(exchanges -> exchanges
-                        // ─── Auth endpoints — public (không cần token) ───
+                        // ─── Public endpoints — không cần token ───
                         .pathMatchers(
-                                "/api/auth/login",
-                                "/api/auth/register",
-                                "/api/auth/refresh-token",
-                                "/api/auth/verify-email",
-                                "/api/auth/resend-verification"
+                                "/api/auth/**",
+                                "/api/users/**",
+                                "/api/tours/**",
+                                "/api/locations/**",
+                                "/api/reviews/**",
+                                "/api/branch-contacts/**",
+                                "/api/posts/**",
+                                "/api/tags/**",
+                                "/api/categories/**"
                         ).permitAll()
 
                         // ─── Swagger / OpenAPI — public ───
@@ -37,11 +41,8 @@ public class SecurityConfig {
                         // ─── WebSocket — public (auth xử lý ở tầng STOMP) ───
                         .pathMatchers("/ws/**").permitAll()
 
-                        // ─── Tất cả route còn lại — phải có token hợp lệ ───
-                        .anyExchange().authenticated()
-                )
-                .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(new ReactiveKeycloakJwtConverter()))
+                        // Gateway chỉ route, từng service tự xử lý auth
+                        .anyExchange().permitAll()
                 )
                 .build();
     }

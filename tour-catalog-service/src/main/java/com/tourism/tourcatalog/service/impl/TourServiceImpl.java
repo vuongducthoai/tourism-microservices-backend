@@ -1,30 +1,48 @@
 package com.tourism.tourcatalog.service.impl;
 
 import com.tourism.tourcatalog.dto.request.SearchToursRequest;
+import com.tourism.tourcatalog.dto.response.BranchContactResponse;
+import com.tourism.tourcatalog.dto.response.DepartureDetailResponse;
+import com.tourism.tourcatalog.dto.response.DeparturePricingResponse;
+import com.tourism.tourcatalog.dto.response.DepartureTransportResponse;
+import com.tourism.tourcatalog.dto.response.ItineraryDayResponse;
+import com.tourism.tourcatalog.dto.response.PolicyTemplateResponse;
+import com.tourism.tourcatalog.dto.response.RelatedTourResponse;
 import com.tourism.tourcatalog.dto.response.TourChatbotSyncResponse;
+import com.tourism.tourcatalog.dto.response.TourDetailResponse;
 import com.tourism.tourcatalog.dto.response.TourDisplayResponse;
 import com.tourism.tourcatalog.dto.response.TourSearchResponse;
 import com.tourism.tourcatalog.dto.response.TourSpecialResponse;
+import com.tourism.tourcatalog.entity.BranchContact;
 import com.tourism.tourcatalog.entity.DeparturePricing;
+import com.tourism.tourcatalog.entity.DepartureTransport;
+import com.tourism.tourcatalog.entity.PolicyTemplate;
 import com.tourism.tourcatalog.entity.Tour;
 import com.tourism.tourcatalog.entity.TourDeparture;
-import com.tourism.tourcatalog.entity.TourImage;
-import com.tourism.tourcatalog.entity.FavoriteTour;
+import com.tourism.tourcatalog.entity.TransportType;
+import com.tourism.tourcatalog.feign.BookingFeignClient;
+import com.tourism.tourcatalog.feign.dto.CouponBriefResponse;
 import com.tourism.tourcatalog.repository.FavoriteTourRepository;
+import com.tourism.tourcatalog.repository.LocationRepository;
 import com.tourism.tourcatalog.repository.ReviewRepository;
 import com.tourism.tourcatalog.repository.TourDepartureRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
 import com.tourism.tourcatalog.service.TourService;
 import lombok.RequiredArgsConstructor;
 import org.modelmapper.ModelMapper;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -36,6 +54,8 @@ public class TourServiceImpl implements TourService {
     private final TourDepartureRepository departureRepository;
     private final ReviewRepository        reviewRepository;
     private final FavoriteTourRepository  favoriteTourRepository;
+    private final LocationRepository      locationRepository;
+    private final BookingFeignClient      bookingFeignClient;
     private final ModelMapper             modelMapper;
 
     /**
@@ -191,6 +211,312 @@ public class TourServiceImpl implements TourService {
         }
 
         return result;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public TourDetailResponse getTourDetailByCode(String tourCode) {
+        Tour tour = tourRepository.findDetailByTourCode(tourCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tour not found: " + tourCode));
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // Lọc và build departures hợp lệ
+        List<DepartureDetailResponse> departureDTOs = new ArrayList<>();
+        if (tour.getDepartures() != null) {
+            List<TourDeparture> validDepartures = tour.getDepartures().stream()
+                    .filter(d -> Boolean.TRUE.equals(d.getStatus()))
+                    .filter(d -> {
+                        // Check if departure is in the future:
+                        // 1) If there's an OUTBOUND transport, use its departTime
+                        // 2) If transports have null type, use any transport's departTime
+                        // 3) Fall back to departure date itself
+                        if (d.getTransports() != null && !d.getTransports().isEmpty()) {
+                            boolean hasOutbound = d.getTransports().stream()
+                                    .anyMatch(t -> TransportType.OUTBOUND.equals(t.getTransportType()));
+                            if (hasOutbound) {
+                                return d.getTransports().stream()
+                                        .filter(t -> TransportType.OUTBOUND.equals(t.getTransportType()))
+                                        .anyMatch(t -> t.getDepartTime() != null && t.getDepartTime().isAfter(now));
+                            }
+                            // transports exist but type is null — use any transport's departTime
+                            boolean anyFuture = d.getTransports().stream()
+                                    .anyMatch(t -> t.getDepartTime() != null && t.getDepartTime().isAfter(now));
+                            if (anyFuture) return true;
+                        }
+                        // fallback: use departure date
+                        return d.getDepartureDate() != null && d.getDepartureDate().isAfter(now);
+                    })
+                    .sorted(Comparator.comparing(TourDeparture::getDepartureDate))
+                    .collect(Collectors.toList());
+
+            for (TourDeparture dep : validDepartures) {
+                // Lấy ADULT pricing
+                BigDecimal adultSalePrice = BigDecimal.ZERO;
+                if (dep.getPricings() != null) {
+                    adultSalePrice = dep.getPricings().stream()
+                            .filter(p -> "ADULT".equals(p.getPassengerType()))
+                            .map(DeparturePricing::getSalePrice)
+                            .filter(p -> p != null)
+                            .findFirst()
+                            .orElse(BigDecimal.ZERO);
+                }
+
+                // Departure-specific coupon
+                String departureCouponCode = null;
+                BigDecimal departureCouponDiscount = BigDecimal.ZERO;
+                if (dep.getCouponId() != null) {
+                    try {
+                        CouponBriefResponse depCoupon = bookingFeignClient.getCouponByDepartureId(dep.getCouponId());
+                        if (depCoupon != null) {
+                            departureCouponCode = depCoupon.getCouponCode();
+                            departureCouponDiscount = depCoupon.getDiscountAmount() != null
+                                    ? BigDecimal.valueOf(depCoupon.getDiscountAmount()) : BigDecimal.ZERO;
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                // Global coupon — tính trên giá sau khi trừ departure coupon
+                BigDecimal priceAfterDepartureCoupon = adultSalePrice.subtract(departureCouponDiscount);
+                String globalCouponCode = null;
+                BigDecimal globalCouponDiscount = BigDecimal.ZERO;
+                try {
+                    CouponBriefResponse globalCoupon = bookingFeignClient.getBestGlobalCoupon(priceAfterDepartureCoupon);
+                    if (globalCoupon != null) {
+                        globalCouponCode = globalCoupon.getCouponCode();
+                        globalCouponDiscount = globalCoupon.getDiscountAmount() != null
+                                ? BigDecimal.valueOf(globalCoupon.getDiscountAmount()) : BigDecimal.ZERO;
+                    }
+                } catch (Exception ignored) {}
+
+                BigDecimal totalDiscount = departureCouponDiscount.add(globalCouponDiscount);
+
+                // Build pricings
+                List<DeparturePricingResponse> pricingDTOs = new ArrayList<>();
+                if (dep.getPricings() != null) {
+                    for (DeparturePricing p : dep.getPricings()) {
+                        BigDecimal finalPrice = p.getSalePrice() != null ? p.getSalePrice() : BigDecimal.ZERO;
+                        if ("ADULT".equals(p.getPassengerType())) {
+                            finalPrice = finalPrice.subtract(totalDiscount).max(BigDecimal.ZERO);
+                        }
+                        pricingDTOs.add(DeparturePricingResponse.builder()
+                                .passengerType(p.getPassengerType())
+                                .description(p.getAgeDescription())
+                                .originalPrice(p.getOriginalPrice())
+                                .salePrice(p.getSalePrice())
+                                .finalPrice(finalPrice)
+                                .build());
+                    }
+                }
+
+                // Build transports
+                List<DepartureTransportResponse> transportDTOs = new ArrayList<>();
+                if (dep.getTransports() != null) {
+                    for (DepartureTransport t : dep.getTransports()) {
+                        String startPointName = resolveAirportName(t.getStartPoint());
+                        String endPointName = resolveAirportName(t.getEndPoint());
+                        transportDTOs.add(DepartureTransportResponse.builder()
+                                .type(t.getTransportType() != null ? t.getTransportType().name() : null)
+                                .transportCode(t.getVehicleName())
+                                .vehicleType(t.getVehicleType() != null ? t.getVehicleType().name() : null)
+                                .vehicleName(t.getVehicleName())
+                                .startPoint(t.getStartPoint())
+                                .startPointName(startPointName)
+                                .endPoint(t.getEndPoint())
+                                .endPointName(endPointName)
+                                .departTime(t.getDepartTime() != null ? t.getDepartTime().toString() : null)
+                                .arrivalTime(t.getArrivalTime() != null ? t.getArrivalTime().toString() : null)
+                                .build());
+                    }
+                }
+
+                String departureDateStr = dep.getDepartureDate() != null
+                        ? dep.getDepartureDate().toLocalDate().toString() : null;
+
+                departureDTOs.add(DepartureDetailResponse.builder()
+                        .departureId(dep.getDepartureID())
+                        .departureDate(departureDateStr)
+                        .availableSlots(dep.getAvailableSlots())
+                        .pricings(pricingDTOs)
+                        .transports(transportDTOs)
+                        .departureCouponCode(departureCouponCode)
+                        .departureCouponDiscount(departureCouponDiscount)
+                        .globalCouponCode(globalCouponCode)
+                        .globalCouponDiscount(globalCouponDiscount)
+                        .totalDiscountAmount(totalDiscount)
+                        .build());
+            }
+        }
+
+        // Images
+        List<String> images = new ArrayList<>();
+        if (tour.getImages() != null) {
+            tour.getImages().forEach(img -> {
+                if (img.getImageUrl() != null) images.add(img.getImageUrl());
+            });
+        }
+
+        // Video URL
+        String videoUrl = null;
+        if (tour.getMediaList() != null) {
+            videoUrl = tour.getMediaList().stream()
+                    .filter(m -> m.getMediaType() != null && m.getMediaType().toUpperCase().contains("VIDEO"))
+                    .findFirst()
+                    .map(m -> m.getMediaUrl())
+                    .orElse(null);
+        }
+
+        // Itinerary
+        List<ItineraryDayResponse> itinerary = new ArrayList<>();
+        if (tour.getItineraryDays() != null) {
+            tour.getItineraryDays().stream()
+                    .sorted(Comparator.comparing(day -> day.getDayNumber() != null ? day.getDayNumber() : 0))
+                    .forEach(day -> itinerary.add(ItineraryDayResponse.builder()
+                            .dayNumber(day.getDayNumber())
+                            .title(day.getTitle())
+                            .details(day.getDetails())
+                            .meals(day.getMeals())
+                            .build()));
+        }
+
+        // Policy + BranchContact từ departure đầu tiên có policy
+        PolicyTemplateResponse policyDTO = null;
+        BranchContactResponse branchContactDTO = null;
+        if (tour.getDepartures() != null) {
+            Optional<TourDeparture> depWithPolicy = tour.getDepartures().stream()
+                    .filter(d -> d.getPolicyTemplate() != null)
+                    .findFirst();
+            if (depWithPolicy.isPresent()) {
+                PolicyTemplate pt = depWithPolicy.get().getPolicyTemplate();
+                policyDTO = PolicyTemplateResponse.builder()
+                        .templateName(pt.getTemplateName())
+                        .tourPriceIncludes(pt.getTourPriceIncludes())
+                        .tourPriceExcludes(pt.getTourPriceExcludes())
+                        .childPricingNotes(pt.getChildPricingNotes())
+                        .paymentConditions(pt.getPaymentConditions())
+                        .registrationConditions(pt.getRegistrationConditions())
+                        .regularDayCancellationRules(pt.getRegularDayCancellationRules())
+                        .holidayCancellationRules(pt.getHolidayCancellationRules())
+                        .forceMajeureRules(pt.getForceMajeureRules())
+                        .packingList(pt.getPackingList())
+                        .build();
+                BranchContact contact = pt.getContact();
+                if (contact != null) {
+                    branchContactDTO = BranchContactResponse.builder()
+                            .branchName(contact.getBranchName())
+                            .address(contact.getAddress())
+                            .phone(contact.getPhone())
+                            .email(contact.getEmail())
+                            .isHeadOffice(contact.getIsHeadOffice())
+                            .build();
+                }
+            }
+        }
+
+        // Header pricing từ departure[0] ADULT
+        BigDecimal headerOriginalPrice = null;
+        BigDecimal headerSalePrice = null;
+        Integer totalDiscountPercentage = null;
+        if (!departureDTOs.isEmpty()) {
+            DepartureDetailResponse firstDep = departureDTOs.get(0);
+            if (firstDep.getPricings() != null) {
+                Optional<DeparturePricingResponse> adultPricing = firstDep.getPricings().stream()
+                        .filter(p -> "ADULT".equals(p.getPassengerType()))
+                        .findFirst();
+                if (adultPricing.isPresent()) {
+                    headerOriginalPrice = adultPricing.get().getOriginalPrice();
+                    headerSalePrice = adultPricing.get().getSalePrice();
+                    BigDecimal finalP = adultPricing.get().getFinalPrice();
+                    if (headerOriginalPrice != null && headerOriginalPrice.compareTo(BigDecimal.ZERO) > 0 && finalP != null) {
+                        double pct = headerOriginalPrice.subtract(finalP).doubleValue() / headerOriginalPrice.doubleValue() * 100;
+                        totalDiscountPercentage = (int) Math.round(pct);
+                    }
+                }
+            }
+        }
+
+        return TourDetailResponse.builder()
+                .tourId(tour.getTourID())
+                .tourCode(tour.getTourCode())
+                .tourName(tour.getTourName())
+                .duration(tour.getDuration())
+                .transportation(tour.getTransportation())
+                .startLocation(tour.getStartLocation() != null ? tour.getStartLocation().getName() : null)
+                .endLocation(tour.getEndLocation() != null ? tour.getEndLocation().getName() : null)
+                .attractions(tour.getAttractions())
+                .meals(tour.getMeals())
+                .suitableCustomer(tour.getSuitableCustomer())
+                .idealTime(tour.getIdealTime())
+                .tripTransportation(tour.getTripTransportation())
+                .hotel(tour.getHotel())
+                .images(images)
+                .videoUrl(videoUrl)
+                .itinerary(itinerary)
+                .departures(departureDTOs)
+                .policy(policyDTO)
+                .branchContact(branchContactDTO)
+                .originalPrice(headerOriginalPrice)
+                .salePrice(headerSalePrice)
+                .totalDiscountPercentage(totalDiscountPercentage)
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RelatedTourResponse> getRelatedTours(String tourCode) {
+        Tour tour = tourRepository.findDetailByTourCode(tourCode)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tour not found: " + tourCode));
+
+        if (tour.getEndLocation() == null) return new ArrayList<>();
+
+        List<Tour> relatedTours = tourRepository.findRelatedTours(
+                tour.getEndLocation().getLocationID(),
+                tour.getTourID(),
+                PageRequest.of(0, 3)
+        );
+
+        List<RelatedTourResponse> result = new ArrayList<>();
+        for (Tour related : relatedTours) {
+            String image = null;
+            if (related.getImages() != null && !related.getImages().isEmpty()) {
+                image = related.getImages().get(0).getImageUrl();
+            }
+
+            BigDecimal lowestSalePrice = null;
+            BigDecimal lowestOriginalPrice = null;
+            if (related.getDepartures() != null) {
+                for (TourDeparture dep : related.getDepartures()) {
+                    if (dep.getPricings() == null) continue;
+                    for (DeparturePricing p : dep.getPricings()) {
+                        if ("ADULT".equals(p.getPassengerType()) && p.getSalePrice() != null) {
+                            if (lowestSalePrice == null || p.getSalePrice().compareTo(lowestSalePrice) < 0) {
+                                lowestSalePrice = p.getSalePrice();
+                                lowestOriginalPrice = p.getOriginalPrice();
+                            }
+                        }
+                    }
+                }
+            }
+
+            result.add(RelatedTourResponse.builder()
+                    .tourId(related.getTourID())
+                    .tourCode(related.getTourCode())
+                    .tourName(related.getTourName())
+                    .startLocation(related.getStartLocation() != null ? related.getStartLocation().getName() : null)
+                    .duration(related.getDuration())
+                    .price(lowestSalePrice)
+                    .originalPrice(lowestOriginalPrice)
+                    .image(image)
+                    .build());
+        }
+        return result;
+    }
+
+    private String resolveAirportName(String airportCode) {
+        if (airportCode == null) return null;
+        return locationRepository.findByAirportCode(airportCode)
+                .map(l -> l.getAirportName() != null ? l.getAirportName() : l.getName())
+                .orElse(airportCode);
     }
 }
 

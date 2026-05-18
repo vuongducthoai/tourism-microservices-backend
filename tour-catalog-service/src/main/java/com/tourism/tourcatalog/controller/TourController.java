@@ -1,7 +1,9 @@
 package com.tourism.tourcatalog.controller;
 
 import com.tourism.tourcatalog.dto.request.SearchToursRequest;
+import com.tourism.tourcatalog.dto.response.RelatedTourResponse;
 import com.tourism.tourcatalog.dto.response.TourChatbotSyncResponse;
+import com.tourism.tourcatalog.dto.response.TourDetailResponse;
 import com.tourism.tourcatalog.dto.response.TourDisplayResponse;
 import com.tourism.tourcatalog.dto.response.TourSearchResponse;
 import com.tourism.tourcatalog.dto.response.TourSpecialResponse;
@@ -50,6 +52,18 @@ public class TourController {
     @GetMapping("/chatbot-sync")
     public ResponseEntity<List<TourChatbotSyncResponse>> getChatbotSyncData() {
         return ResponseEntity.ok(tourService.getAllToursForChatbotSync());
+    }
+
+    @Operation(summary = "Lấy tour liên quan", description = "3 tour cùng điểm đến")
+    @GetMapping("/related/{tourCode}")
+    public ResponseEntity<List<RelatedTourResponse>> getRelatedTours(@PathVariable String tourCode) {
+        return ResponseEntity.ok(tourService.getRelatedTours(tourCode));
+    }
+
+    @Operation(summary = "Chi tiết tour", description = "Trang chi tiết tour theo tourCode")
+    @GetMapping("/{tourCode}")
+    public ResponseEntity<TourDetailResponse> getTourDetail(@PathVariable String tourCode) {
+        return ResponseEntity.ok(tourService.getTourDetailByCode(tourCode));
     }
 }
 

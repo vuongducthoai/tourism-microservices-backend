@@ -2,6 +2,7 @@ package com.tourism.notification.service;
 
 import com.tourism.notification.dto.BookingEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
+import com.tourism.notification.dto.VerificationEmailRequest;
 
 public interface MailService {
     /** Gửi email cho admin khi khách hàng yêu cầu hoàn tiền ngân hàng */
@@ -33,5 +34,8 @@ public interface MailService {
      * Được gọi bởi handleUserStatusUpdated trong NotificationServiceImpl.
      */
     void sendAccountStatusEmail(UserStatusEventDTO event);
+
+    /** Gửi email xác thực tài khoản khi user đăng ký hoặc yêu cầu gửi lại */
+    void sendVerificationEmail(VerificationEmailRequest request);
 }
 

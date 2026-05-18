@@ -1,10 +1,12 @@
 package com.tourism.iam.service.impl;
 
 
+import com.tourism.iam.feign.NotificationFeignClient;
 import com.tourism.iam.dto.request.GoogleLoginRequest;
 import com.tourism.iam.dto.request.LoginRequest;
 import com.tourism.iam.dto.request.RefreshTokenRequest;
 import com.tourism.iam.dto.request.RegisterRequest;
+import com.tourism.iam.dto.request.VerificationEmailRequest;
 import com.tourism.iam.dto.response.LoginResponse;
 import com.tourism.iam.dto.response.TokenResponse;
 import com.tourism.iam.entity.Role;
@@ -37,6 +39,7 @@ public class AuthServiceImpl implements AuthService {
     private final KeycloakAdminService keycloakAdminService;
     private final PasswordEncoder passwordEncoder;
     private final RestTemplate restTemplate;
+    private final NotificationFeignClient notificationClient;
 
     @Value("${keycloak.server-url}")
     private String keycloakServerUrl;
@@ -89,11 +92,16 @@ public class AuthServiceImpl implements AuthService {
     public LoginResponse login(LoginRequest request) {
         // 1. Find User in iam_db
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found with email: " + request.getEmail()));   
-        
-        // 2. Check if yout account is locked
+                .orElseThrow(() -> new RuntimeException("User not found with email: " + request.getEmail()));
+
+        // 2. Check if account is locked
         if(Boolean.FALSE.equals(user.getStatus())){
-            throw new RuntimeException("Account is locked");  
+            throw new RuntimeException("Tài khoản của bạn đã bị khóa");
+        }
+
+        // 3. Check if email is verified
+        if(Boolean.FALSE.equals(user.getIsEmailVerified())){
+            throw new RuntimeException("Vui lòng xác thực email trước khi đăng nhập");
         }
 
            // 4. Lazy Migration — If the user is not already in Keycloak, create a new one.
@@ -105,9 +113,17 @@ public class AuthServiceImpl implements AuthService {
         Map<String, Object> tokenData;
         try {
             tokenData = getTokenFromKeycloak(request.getEmail(), request.getPassword());
+        } catch (HttpClientErrorException e) {
+            // Keycloak returned 4xx → wrong credentials, do NOT fallback
+            log.error("Keycloak rejected credentials for user {}: {}", request.getEmail(), e.getStatusCode());
+            throw new RuntimeException("Email hoặc mật khẩu không đúng");
         } catch (Exception e) {
-            // Fallback: Generate simple JWT token locally if Keycloak fails (dev mode)
-            log.warn("Keycloak token request failed, using fallback token for user {}: {}", request.getEmail(), e.getMessage());
+            // Keycloak is unreachable (connection refused, timeout) → verify password locally then fallback
+            log.warn("Keycloak unreachable for user {}, verifying password locally: {}", request.getEmail(), e.getMessage());
+            if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+                throw new RuntimeException("Email hoặc mật khẩu không đúng");
+            }
+            // Password correct but Keycloak down → issue dev token
             tokenData = new HashMap<>();
             tokenData.put("access_token", "dev-token-" + System.currentTimeMillis() + "-" + user.getUserID());
             tokenData.put("refresh_token", "dev-refresh-" + System.currentTimeMillis() + "-" + user.getUserID());
@@ -167,7 +183,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void register(RegisterRequest request) {
-         // 1. Validate password match
+        // 1. Validate password match
         if (!request.getPassword().equals(request.getConfirmPassword())) {
             throw new RuntimeException("Mật khẩu xác nhận không khớp");
         }
@@ -177,7 +193,7 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("Email đã được sử dụng");
         }
 
-        // 3. Create user in iam_db
+        // 3. Create user in iam_db (status=false until email verified)
         User user = User.builder()
                 .fullName(request.getFullName())
                 .email(request.getEmail())
@@ -187,7 +203,7 @@ public class AuthServiceImpl implements AuthService {
                 .districtCode(request.getDistrictCode())
                 .districtName(request.getDistrictName())
                 .role(com.tourism.iam.entity.Role.CUSTOMER)
-                .status(true)
+                .status(false)
                 .isEmailVerified(false)
                 .migratedToKeycloak(false)
                 .verificationToken(UUID.randomUUID().toString())
@@ -212,8 +228,21 @@ public class AuthServiceImpl implements AuthService {
             log.error("Failed to create Keycloak user during register: {}", e.getMessage());
         }
 
-        // 5. Send verification email (keep original logic)
-        log.info("Registered user: email={}", user.getEmail());
+        // 5. Send verification email via notification-service
+        try {
+            String verificationUrl = "http://localhost:3000/verify-email?token=" + user.getVerificationToken();
+            notificationClient.sendVerificationEmail(
+                VerificationEmailRequest.builder()
+                    .email(user.getEmail())
+                    .fullName(user.getFullName())
+                    .verificationToken(user.getVerificationToken())
+                    .verificationUrl(verificationUrl)
+                    .build()
+            );
+            log.info("Verification email sent to: {}", user.getEmail());
+        } catch (Exception e) {
+            log.error("Failed to send verification email for user {}: {}", user.getEmail(), e.getMessage());
+        }
     }
 
     @Override
@@ -228,6 +257,7 @@ public class AuthServiceImpl implements AuthService {
 
         // Enable in iam_db
         user.setIsEmailVerified(true);
+        user.setStatus(true);
         user.setVerificationToken(null);
         user.setVerificationTokenExpiry(null);
         userRepository.save(user);
@@ -236,6 +266,8 @@ public class AuthServiceImpl implements AuthService {
         if (user.getKeycloakId() != null) {
             keycloakAdminService.enableUser(user.getKeycloakId());
         }
+
+        log.info("Email verified and account activated: email={}", user.getEmail());
     }
 
     @Override
@@ -247,18 +279,42 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("Email đã được xác thực");
         }
 
-        // Create a new token (to be used for automated workflow processing if not going through Keycloak)
+        // Create a new token
         user.setVerificationToken(UUID.randomUUID().toString());
         user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
         userRepository.save(user);
 
         // If the user has already migrated to Keycloak, use Keycloak to send a verification email.
         if (Boolean.TRUE.equals(user.getMigratedToKeycloak()) && user.getKeycloakId() != null) {
-            keycloakAdminService.sendVerificationEmail(user.getKeycloakId());
-            log.info("Resent Keycloak verification email: email={}", email);
+            try {
+                keycloakAdminService.sendVerificationEmail(user.getKeycloakId());
+                log.info("Resent Keycloak verification email: email={}", email);
+            } catch (Exception e) {
+                log.warn("Failed to send via Keycloak, using notification-service fallback: {}", e.getMessage());
+                sendVerificationViaNotificationService(user);
+            }
         } else {
-            // User hasn't migrated yet → send email manually
-            log.warn("User not yet migrated to Keycloak, manual email required: email={}", email);
+            // Send via notification-service
+            sendVerificationViaNotificationService(user);
+        }
+    }
+
+    private void sendVerificationViaNotificationService(User user) {
+        try {
+            String verificationUrl = "http://localhost:3000/verify-email?token=" + user.getVerificationToken();
+            notificationClient.sendVerificationEmail(
+                VerificationEmailRequest.builder()
+                    .email(user.getEmail())
+                    .fullName(user.getFullName())
+                    .verificationToken(user.getVerificationToken())
+                    .verificationUrl(verificationUrl)
+                    .build()
+            );
+            log.info("Sent verification email via notification-service: email={}", user.getEmail());
+        } catch (Exception e) {
+            log.error("Failed to send verification email for user {}: {}. Will allow retry.", user.getEmail(), e.getMessage());
+            // Don't throw exception - allow the token to be generated for retry
+            // User can retry the resend later
         }
     }
 
@@ -280,6 +336,10 @@ public class AuthServiceImpl implements AuthService {
             ResponseEntity<Map> response = restTemplate.postForEntity(getTokenUrl(), entity, Map.class);
             Map<String, Object> data = response.getBody();
 
+            if (data == null) {
+                throw new RuntimeException("Refresh token không hợp lệ hoặc đã hết hạn");
+            }
+
             return TokenResponse.builder()
                     .accessToken((String) data.get("access_token"))
                     .refreshToken((String) data.get("refresh_token"))
@@ -289,7 +349,7 @@ public class AuthServiceImpl implements AuthService {
         } catch (HttpClientErrorException e) {
             throw new RuntimeException("Refresh token không hợp lệ hoặc đã hết hạn");
         }
-        
+
     }
 
     @Override
@@ -297,14 +357,20 @@ public class AuthServiceImpl implements AuthService {
         //Call Keycloak to revoke session
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-       
+
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
         body.add("client_id", clientId);
         body.add("client_secret", clientSecret);
         body.add("refresh_token", refreshToken);
 
         HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(body, headers);
-        restTemplate.postForEntity(getLogoutUrl(), entity, Void.class);
+
+        try {
+            restTemplate.postForEntity(getLogoutUrl(), entity, Void.class);
+            log.info("Logout successful");
+        } catch (Exception e) {
+            log.warn("Keycloak logout failed: {}. Continuing with local logout.", e.getMessage());
+        }
     }
 
     @Override

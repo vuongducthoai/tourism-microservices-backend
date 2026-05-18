@@ -19,7 +19,7 @@ public class ItineraryDay extends BaseEntity {
     private String title;
 
     @Column(columnDefinition = "TEXT")
-    private String description;
+    private String details;
 
     private String meals;
 

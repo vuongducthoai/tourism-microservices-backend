@@ -23,6 +23,11 @@ public interface UserService {
     void addCoins(Integer userId, java.math.BigDecimal amount, String operationKey);
 
     /**
+     * Deduct coins from user's coin balance (called by booking-service via Feign when points are redeemed).
+     */
+    void deductCoins(Integer userId, java.math.BigDecimal amount);
+
+    /**
      * Admin search users by fullName / phone / email.
      * Returns only CUSTOMER role, sorted Online → Away → Offline.
      */

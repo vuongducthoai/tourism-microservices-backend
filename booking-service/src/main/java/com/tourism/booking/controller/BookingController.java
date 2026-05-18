@@ -3,10 +3,14 @@ package com.tourism.booking.controller;
 import com.tourism.booking.dto.request.AdminSearchBookingRequest;
 import com.tourism.booking.dto.request.AdminUpdateStatusRequest;
 import com.tourism.booking.dto.request.CancelBookingRequest;
+import com.tourism.booking.dto.request.CreateBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
 import com.tourism.booking.dto.response.BookingBriefResponse;
+import com.tourism.booking.dto.response.BookingOrderResponse;
+import com.tourism.booking.dto.response.BookingPaymentDetailResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.dto.response.CouponChatbotSyncResponse;
+import com.tourism.booking.dto.response.CreateBookingResponse;
 import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.service.BookingService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -54,6 +58,40 @@ public class BookingController {
                         .build())
                 .collect(Collectors.toList());
         return ResponseEntity.ok(result);
+    }
+
+    @Operation(summary = "Lấy thông tin trang đặt tour", description = "Trả về giá, coupon, chuyến bay — dùng để hiển thị form đặt tour")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Thành công"),
+            @ApiResponse(responseCode = "404", description = "Không tìm thấy departure")
+    })
+    @GetMapping("/order")
+    public ResponseEntity<BookingOrderResponse> getOrderInfo(
+            @RequestParam String tourCode,
+            @RequestParam Integer departureId) {
+        return ResponseEntity.ok(bookingService.getOrderInfo(tourCode, departureId));
+    }
+
+    @Operation(summary = "Tạo booking mới", description = "Tính giá, apply coupon, trừ điểm, lưu booking — trả về bookingCode để redirect sang payment")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Đặt tour thành công"),
+            @ApiResponse(responseCode = "400", description = "Hết chỗ hoặc coupon không hợp lệ")
+    })
+    @PostMapping("/create")
+    public ResponseEntity<CreateBookingResponse> createBooking(
+            @RequestBody CreateBookingRequest request) {
+        return ResponseEntity.ok(bookingService.createBooking(request));
+    }
+
+    @Operation(summary = "Lay thong tin booking de hien thi trang thanh toan", description = "Tra ve gia, hang khach, tour info cho trang /payment-booking")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Thong tin booking"),
+            @ApiResponse(responseCode = "404", description = "Khong tim thay booking")
+    })
+    @GetMapping("/payment/{bookingCode}")
+    public ResponseEntity<BookingPaymentDetailResponse> getBookingPaymentDetail(
+            @PathVariable String bookingCode) {
+        return ResponseEntity.ok(bookingService.getBookingPaymentDetail(bookingCode));
     }
 
     @Operation(summary = "[Internal] Lay thong tin booking theo ID", description = "Endpoint noi bo - tour-catalog-service goi sau khi review duoc gui")

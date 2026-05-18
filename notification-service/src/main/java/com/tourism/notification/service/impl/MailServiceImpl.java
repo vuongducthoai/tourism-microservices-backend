@@ -2,6 +2,7 @@ package com.tourism.notification.service.impl;
 
 import com.tourism.notification.dto.BookingEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
+import com.tourism.notification.dto.VerificationEmailRequest;
 import com.tourism.notification.service.MailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -304,6 +305,40 @@ public class MailServiceImpl implements MailService {
         }
     }
 
+    // ── Gửi email xác thực tài khoản cho người dùng mới ──────────────────────────
+    @Async
+    @Override
+    public void sendVerificationEmail(VerificationEmailRequest request) {
+        if (request.getEmail() == null || request.getEmail().isBlank()) {
+            log.warn("sendVerificationEmail: no email provided");
+            return;
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(request.getEmail());
+            msg.setSubject("XÁC THỰC TÀI KHOẢN - FUTURE TRAVEL");
+
+            String body = String.format(
+                "Xin chào %s,\n\n" +
+                "Cảm ơn bạn đã đăng ký tài khoản trên Future Travel.\n" +
+                "Vui lòng xác thực email của bạn bằng cách click vào link dưới đây:\n\n" +
+                "%s\n\n" +
+                "Link này có hiệu lực trong 24 giờ.\n\n" +
+                "Nếu bạn không phải người tạo tài khoản này, vui lòng bỏ qua email này.\n\n" +
+                "Trân trọng,\nFuture Travel Team",
+                nvl(request.getFullName()),
+                request.getVerificationUrl()
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Verification email sent to: {}", request.getEmail());
+
+        } catch (Exception e) {
+            log.error("Failed to send verification email to {}: {}",
+                    request.getEmail(), e.getMessage());
+        }
     private String buildRefundAccountInfo(BookingEventDTO event) {
         if (!hasText(event.getRefundBank())
                 && !hasText(event.getRefundAccountNumber())

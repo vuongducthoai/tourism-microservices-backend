@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -50,5 +51,14 @@ public class LocationController {
     @GetMapping("/chatbot-sync")
     public ResponseEntity<List<LocationChatbotSyncResponse>> getChatbotSyncLocations() {
         return ResponseEntity.ok(locationService.getAllLocationsForChatbotSync());
+    }
+
+    @Operation(summary = "[Admin] Danh sách điểm quốc nội", description = "Lấy danh sách các địa điểm quốc nội — dùng cho admin departure management")
+    @ApiResponse(responseCode = "200", description = "Danh sách địa điểm quốc nội")
+    @GetMapping("/national")
+    public ResponseEntity<Page<LocationResponse>> getNationalLocations(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1000") int size) {
+        return ResponseEntity.ok(locationService.getNationalLocations(page, size));
     }
 }

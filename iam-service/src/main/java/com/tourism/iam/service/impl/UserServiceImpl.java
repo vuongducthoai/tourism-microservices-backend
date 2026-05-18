@@ -115,6 +115,21 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional
+    public void deductCoins(Integer userId, java.math.BigDecimal amount) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
+        java.math.BigDecimal current = user.getCoinBalance() != null
+                ? user.getCoinBalance()
+                : java.math.BigDecimal.ZERO;
+        if (current.compareTo(amount) < 0) {
+            throw new RuntimeException("Insufficient coin balance for user: " + userId);
+        }
+        user.setCoinBalance(current.subtract(amount));
+        userRepository.save(user);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Page<UserAdminResponse> searchUsers(UserSearchRequest searchDTO, Pageable pageable) {
         log.info("Searching users with filters: {}", searchDTO);

@@ -2,11 +2,14 @@ package com.tourism.iam.controller;
 
 import com.tourism.iam.dto.request.GoogleLoginRequest;
 import com.tourism.iam.dto.request.LoginRequest;
+import com.tourism.iam.dto.request.LogoutAllRequest;
 import com.tourism.iam.dto.request.RefreshTokenRequest;
 import com.tourism.iam.dto.request.RegisterRequest;
 import com.tourism.iam.dto.response.LoginResponse;
 import com.tourism.iam.dto.response.TokenResponse;
+import com.tourism.iam.dto.response.UserDetailResponse;
 import com.tourism.iam.service.AuthService;
+import com.tourism.iam.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +23,7 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+    private final UserService userService;
 
     // POST /api/auth/login
     @PostMapping("/login")
@@ -64,13 +68,19 @@ public class AuthController {
 
     // POST /api/auth/logout-all
     @PostMapping("/logout-all")
-    public ResponseEntity<Map<String, String>> logoutAll(@RequestBody Map<String, String> body) {
-        authService.logoutAll(Integer.valueOf(body.get("userId")));
+    public ResponseEntity<Map<String, String>> logoutAll(@Valid @RequestBody LogoutAllRequest request) {
+        authService.logoutAll(request.getUserId());
         return ResponseEntity.ok(Map.of("message", "Đã đăng xuất khỏi tất cả thiết bị"));
     }
 
     @PostMapping("/google-login")
     public ResponseEntity<LoginResponse> googleLogin(@Valid @RequestBody GoogleLoginRequest request) {
        return ResponseEntity.ok(authService.googleLogin(request));
+    }
+
+    // GET /api/auth/profile?userId=xxx
+    @GetMapping("/profile")
+    public ResponseEntity<UserDetailResponse> getProfile(@RequestParam Integer userId) {
+        return ResponseEntity.ok(userService.getUserById(userId));
     }
 }
