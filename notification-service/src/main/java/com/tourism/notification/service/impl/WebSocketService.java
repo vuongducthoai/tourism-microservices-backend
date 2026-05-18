@@ -1,6 +1,7 @@
 package com.tourism.notification.service.impl;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.CouponEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,6 +55,26 @@ public class WebSocketService {
             log.info("WebSocket pushed to /topic/admin/users for userId={}", event.getUserID());
         } catch (Exception e) {
             log.error("WebSocket push failed for /topic/admin/users userId={}: {}", event.getUserID(), e.getMessage());
+        }
+    }
+
+    /** Notify admin coupon management page when a coupon is created/updated */
+    public void notifyAdminCoupon(CouponEventDTO event) {
+        try {
+            messagingTemplate.convertAndSend("/topic/admin/coupons", event);
+            log.info("WebSocket pushed to /topic/admin/coupons for coupon: {}", event.getCouponCode());
+        } catch (Exception e) {
+            log.error("WebSocket push failed for /topic/admin/coupons coupon={}: {}", event.getCouponCode(), e.getMessage());
+        }
+    }
+
+    /** Broadcast promotion to all users (GLOBAL coupons) */
+    public void broadcastPromotion(CouponEventDTO event) {
+        try {
+            messagingTemplate.convertAndSend("/topic/promotions", event);
+            log.info("WebSocket broadcast to /topic/promotions for coupon: {}", event.getCouponCode());
+        } catch (Exception e) {
+            log.error("WebSocket broadcast failed for /topic/promotions coupon={}: {}", event.getCouponCode(), e.getMessage());
         }
     }
 }

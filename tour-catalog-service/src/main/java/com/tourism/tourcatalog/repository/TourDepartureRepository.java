@@ -1,12 +1,16 @@
 package com.tourism.tourcatalog.repository;
 
 import com.tourism.tourcatalog.entity.TourDeparture;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 public interface TourDepartureRepository extends JpaRepository<TourDeparture, Integer> {
 
@@ -32,4 +36,23 @@ public interface TourDepartureRepository extends JpaRepository<TourDeparture, In
               )
             """)
     List<TourDeparture> findActiveDiscountedDepartures(@Param("today") LocalDateTime today);
+
+    @Modifying
+    @Query("""
+            UPDATE TourDeparture d
+            SET d.availableSlots = d.availableSlots - :count
+            WHERE d.departureID = :departureId
+            AND d.availableSlots >= :count
+            """)
+    int decreaseAvailableSlots(@Param("departureId") Integer departureId, @Param("count") int count);
+
+    Page<TourDeparture> findAllByIsDeletedFalse(Pageable pageable);
+
+    Page<TourDeparture> findAllByStatusAndIsDeletedFalse(Boolean status, Pageable pageable);
+
+    Page<TourDeparture> findAllByIsDeletedFalseAndDepartureDateBetween(
+            LocalDateTime startDate, LocalDateTime endDate, Pageable pageable);
+
+    Page<TourDeparture> findAllByStatusAndIsDeletedFalseAndDepartureDateBetween(
+            Boolean status, LocalDateTime startDate, LocalDateTime endDate, Pageable pageable);
 }

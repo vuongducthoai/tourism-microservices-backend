@@ -1,6 +1,7 @@
 package com.tourism.notification.controller;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.CouponEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
 import com.tourism.notification.dto.VerificationEmailRequest;
 import com.tourism.notification.service.NotificationService;
@@ -63,6 +64,22 @@ public class NotificationController {
     @PostMapping("/send-verification-email")
     public ResponseEntity<Void> sendVerificationEmail(@RequestBody VerificationEmailRequest request) {
         mailService.sendVerificationEmail(request);
+        return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[Internal] Coupon mới được tạo", description = "booking-service gọi khi admin tạo coupon với sendNotification=true")
+    @ApiResponse(responseCode = "200", description = "Xử lý thành công")
+    @PostMapping("/coupon-created")
+    public ResponseEntity<Void> couponCreated(@RequestBody CouponEventDTO event) {
+        notificationService.handleCouponCreated(event);
+        return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[Internal] Coupon được cập nhật", description = "booking-service gọi khi admin cập nhật coupon với sendNotification=true")
+    @ApiResponse(responseCode = "200", description = "Xử lý thành công")
+    @PostMapping("/coupon-updated")
+    public ResponseEntity<Void> couponUpdated(@RequestBody CouponEventDTO event) {
+        notificationService.handleCouponUpdated(event);
         return ResponseEntity.ok().build();
     }
 }

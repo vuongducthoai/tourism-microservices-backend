@@ -11,7 +11,8 @@ import lombok.*;
 public class PostLike extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer postLikeID;
+    @Column(name = "likeid")
+    private Integer likeId;
 
     @Column(name = "user_id", nullable = false)
     private Integer userId;

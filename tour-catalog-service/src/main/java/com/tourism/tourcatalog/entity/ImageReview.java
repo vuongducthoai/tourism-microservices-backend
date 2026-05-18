@@ -13,6 +13,7 @@ public class ImageReview extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer imageReviewID;
 
+    @Column(name = "image")
     private String imageUrl;
 
     @ManyToOne(fetch = FetchType.LAZY)

@@ -16,6 +16,7 @@ import java.util.List;
 public class ForumPost extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "postid")
     private Integer postID;
 
     // Tham chiếu sang IAM Service bằng ID

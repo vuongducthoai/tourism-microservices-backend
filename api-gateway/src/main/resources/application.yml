@@ -17,7 +17,6 @@ spring:
           '[/**]':
             allowedOrigins:
               - "http://localhost:3000"
-              - "http://localhost:3001"
             allowedMethods:
               - GET
               - POST
@@ -25,7 +24,10 @@ spring:
               - DELETE
               - PATCH
               - OPTIONS
-            allowedHeaders: "*"
+            allowedHeaders:
+              - Content-Type
+              - Authorization
+              - X-Requested-With
             allowCredentials: true
 
       routes:
@@ -41,7 +43,7 @@ spring:
         - id: tour-catalog-service
           uri: lb://tour-catalog-service
           predicates:
-            - Path=/api/tours/**, /api/admin/tours/**, /api/locations/**, /api/admin/locations/**, /api/departures/**, /api/reviews/**, /api/favorite-tours/**, /api/branch-contacts/**, /api/policy-templates/**, /api/tour-media/**
+            - Path=/api/tours/**, /api/admin/tours/**, /api/admin/departures/**, /api/locations/**, /api/admin/locations/**, /api/admin/policy-templates/**, /api/admin/branches/**, /api/departures/**, /api/reviews/**, /api/favorite-tours/**, /api/branch-contacts/**, /api/policy-templates/**, /api/tour-media/**
           filters:
             - StripPrefix=0
 
@@ -49,7 +51,7 @@ spring:
         - id: booking-service
           uri: lb://booking-service
           predicates:
-            - Path=/api/bookings/**, /api/coupons/**, /api/admin/bookings/**
+            - Path=/api/bookings/**, /api/coupons/**, /api/admin/bookings/**, /api/admin/coupons/**
           filters:
             - StripPrefix=0
 
@@ -65,7 +67,7 @@ spring:
         - id: forum-service
           uri: lb://forum-service
           predicates:
-            - Path=/api/posts/**, /api/tags/**, /api/categories/**, /api/bookmarks/**, /api/followers/**
+            - Path=/api/forum/**, /api/posts/**, /api/tags/**, /api/categories/**, /api/bookmarks/**, /api/followers/**
           filters:
             - StripPrefix=0
 

@@ -96,7 +96,7 @@ public class AuthServiceImpl implements AuthService {
 
         // 2. Check if account is locked
         if(Boolean.FALSE.equals(user.getStatus())){
-            throw new RuntimeException("Account is locked");
+            throw new RuntimeException("Tài khoản của bạn đã bị khóa");
         }
 
         // 3. Check if email is verified

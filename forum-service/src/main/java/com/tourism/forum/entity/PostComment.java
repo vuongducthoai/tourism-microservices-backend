@@ -13,16 +13,24 @@ import java.util.List;
 public class PostComment extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "commentid")
     private Integer commentID;
 
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 
+    @Column(name = "like_count")
     private Integer likeCount = 0;
 
-    // Tham chiếu sang IAM Service bằng ID
     @Column(name = "user_id", nullable = false)
     private Integer userId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ContentStatus status = ContentStatus.PUBLISHED;
+
+    @Column(name = "is_edited")
+    private Boolean isEdited = false;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "post_id")

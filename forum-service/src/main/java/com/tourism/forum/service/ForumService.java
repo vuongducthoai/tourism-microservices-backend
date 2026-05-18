@@ -1,0 +1,42 @@
+package com.tourism.forum.service;
+
+import com.tourism.forum.dto.request.CommentRequest;
+import com.tourism.forum.dto.request.CreatePostRequest;
+import com.tourism.forum.dto.request.PostFilterRequest;
+import com.tourism.forum.dto.response.CategoryResponse;
+import com.tourism.forum.dto.response.PostDetailResponse;
+import com.tourism.forum.dto.response.PostListResponse;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
+import java.util.List;
+import java.util.Map;
+
+public interface ForumService {
+
+    Page<PostListResponse> getPosts(PostFilterRequest filter, Pageable pageable);
+
+    Page<PostListResponse> getTrendingPosts(Pageable pageable);
+
+    Page<PostListResponse> getPostsByUser(Integer userId, Pageable pageable);
+
+    PostDetailResponse createPost(CreatePostRequest request);
+
+    PostDetailResponse getPostDetail(Integer postId, Integer currentUserId);
+
+    void toggleLike(Integer postId, Integer userId);
+
+    boolean checkLikeStatus(Integer postId, Integer userId);
+
+    PostDetailResponse addComment(Integer postId, CommentRequest request);
+
+    void toggleCommentLike(Integer commentId, Integer userId);
+
+    List<CategoryResponse> getAllCategories();
+
+    List<CategoryResponse> getPopularCategories(int limit);
+
+    List<PostListResponse.TagInfo> getPopularTags(int limit);
+
+    Map<String, Long> getUserStats(Integer userId);
+}

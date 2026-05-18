@@ -73,6 +73,17 @@ public class UserController {
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "[Internal] Trừ coin khi dùng điểm thưởng", description = "Endpoint nội bộ — booking-service gọi qua Feign khi khách dùng điểm đặt tour")
+    @ApiResponse(responseCode = "200", description = "Trừ coin thành công")
+    @PostMapping("/{userID}/deduct-coins")
+    public ResponseEntity<Void> deductCoins(
+            @PathVariable Integer userID,
+            @RequestParam BigDecimal amount
+    ) {
+        userService.deductCoins(userID, amount);
+        return ResponseEntity.ok().build();
+    }
+
     @Operation(summary = "[Admin] Tìm kiếm người dùng", description = "Tìm kiếm CUSTOMER theo fullName / phone / email với phân trang. Kết quả sắp xếp: Online → Away → Offline")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Danh sách user phân trang")

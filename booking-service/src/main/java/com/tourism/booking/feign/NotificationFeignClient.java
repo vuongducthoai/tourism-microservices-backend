@@ -1,6 +1,7 @@
 package com.tourism.booking.feign;
 
 import com.tourism.booking.event.BookingEventDTO;
+import com.tourism.booking.event.CouponEventDTO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -13,18 +14,18 @@ import org.springframework.web.bind.annotation.RequestBody;
 @FeignClient(name = "notification-service")
 public interface NotificationFeignClient {
 
-    /** Khách gửi yêu cầu hoàn tiền ngân hàng → email admin + WebSocket admin */
     @PostMapping("/api/notifications/refund-requested")
     void notifyRefundRequested(@RequestBody BookingEventDTO event);
 
-    /** Booking bị hủy (coin path) → email khách + WebSocket */
     @PostMapping("/api/notifications/status-updated")
     void notifyStatusUpdated(@RequestBody BookingEventDTO event);
 
-    /**
-     * Admin xác nhận booking (PENDING_CONFIRMATION → PAID).
-     * → Email xác nhận cho khách + WebSocket admin + WebSocket user
-     */
     @PostMapping("/api/notifications/booking-confirmed")
     void notifyBookingConfirmed(@RequestBody BookingEventDTO event);
+
+    @PostMapping("/api/notifications/coupon-created")
+    void notifyCouponCreated(@RequestBody CouponEventDTO event);
+
+    @PostMapping("/api/notifications/coupon-updated")
+    void notifyCouponUpdated(@RequestBody CouponEventDTO event);
 }

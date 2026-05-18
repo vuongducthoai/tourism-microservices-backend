@@ -1,6 +1,7 @@
 package com.tourism.notification.service.impl;
 
 import com.tourism.notification.dto.BookingEventDTO;
+import com.tourism.notification.dto.CouponEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
 import com.tourism.notification.entity.Notification;
 import com.tourism.notification.entity.NotificationType;
@@ -130,15 +131,37 @@ public class NotificationServiceImpl implements NotificationService {
         }
     }
 
-    /**
-     * Admin khóa / mở khóa tài khoản user.
-     * 1. Gửi email thông báo cho người dùng (async, lỗi không ảnh hưởng response).
-     * 2. Push WebSocket tới /topic/admin/users để admin page tự refresh.
-     */
     @Override
     public void handleUserStatusUpdated(UserStatusEventDTO event) {
         log.info("Handling user-status-updated for userId={}, status={}", event.getUserID(), event.getStatus());
         mailService.sendAccountStatusEmail(event);
         webSocketService.notifyAdminUserUpdate(event);
+    }
+
+    @Override
+    public void handleCouponCreated(CouponEventDTO event) {
+        log.info("Handling coupon-created for coupon: {}", event.getCouponCode());
+
+        // Push to admin coupon management page
+        webSocketService.notifyAdminCoupon(event);
+
+        // Broadcast to users if GLOBAL coupon
+        if ("GLOBAL".equals(event.getCouponType())) {
+            webSocketService.broadcastPromotion(event);
+        }
+
+        // Save admin notification
+        saveNotification(
+                null,
+                NotificationType.COUPON_NEW,
+                "Coupon mới: " + event.getCouponCode(),
+                String.format("Coupon '%s' giảm %d%% vừa được tạo.", event.getCouponCode(), event.getDiscountAmount())
+        );
+    }
+
+    @Override
+    public void handleCouponUpdated(CouponEventDTO event) {
+        log.info("Handling coupon-updated for coupon: {}", event.getCouponCode());
+        webSocketService.notifyAdminCoupon(event);
     }
 }
