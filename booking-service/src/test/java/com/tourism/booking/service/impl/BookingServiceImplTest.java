@@ -1,5 +1,6 @@
 package com.tourism.booking.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.booking.convert.BookingConverter;
 import com.tourism.booking.dto.request.CancelBookingRequest;
 import com.tourism.booking.dto.request.RefundInformationRequest;
@@ -7,6 +8,7 @@ import com.tourism.booking.dto.response.BookingBriefResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.entity.Booking;
 import com.tourism.booking.entity.BookingStatus;
+import com.tourism.booking.entity.OutboxEvent;
 import com.tourism.booking.entity.RefundInformation;
 import com.tourism.booking.feign.IamFeignClient;
 import com.tourism.booking.feign.NotificationFeignClient;
@@ -15,6 +17,7 @@ import com.tourism.booking.feign.TourCatalogFeignClient;
 import com.tourism.booking.feign.dto.DepartureInfoResponse;
 import com.tourism.booking.feign.dto.PaymentInfoResponse;
 import com.tourism.booking.repository.BookingRepository;
+import com.tourism.booking.repository.OutboxEventRepository;
 import com.tourism.booking.repository.RefundInformationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -51,18 +54,25 @@ class BookingServiceImplTest {
 
     @Mock BookingRepository           bookingRepository;
     @Mock RefundInformationRepository refundRepository;
+    @Mock OutboxEventRepository       outboxRepository;
     @Mock TourCatalogFeignClient      tourCatalogClient;
     @Mock PaymentFeignClient          paymentClient;
     @Mock IamFeignClient              iamClient;
     @Mock NotificationFeignClient     notificationClient;
     @Mock BookingConverter            bookingConverter;
+    @Mock ObjectMapper                objectMapper;
 
     @InjectMocks BookingServiceImpl service;
 
     // ── setup ─────────────────────────────────────────────────────────────────
 
     @BeforeEach
-    void setUpConverter() {
+    void setUpConverter() throws Exception {
+        // ObjectMapper stub: return valid JSON for any object (used by OutboxEventFactory)
+        lenient().when(objectMapper.writeValueAsString(any())).thenReturn("{\"stub\":true}");
+        // OutboxEvent save: return the entity unchanged
+        lenient().when(outboxRepository.save(any(OutboxEvent.class))).thenAnswer(inv -> inv.getArgument(0));
+
         // lenient() prevents UnnecessaryStubbing on tests that throw before toResponse() is called
         lenient().when(bookingConverter.toResponse(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
@@ -74,6 +84,7 @@ class BookingServiceImplTest {
             r.setRefundAmount(b.getRefundAmount());
             r.setBookingStatus(b.getBookingStatus() != null ? b.getBookingStatus().name() : null);
             r.setDepartureID(b.getDepartureId());
+            r.setCoinRefundStatus(b.getCoinRefundStatus());
             // refund info
             if (b.getRefundInformation() != null) {
                 r.setRefundBank(b.getRefundInformation().getBank());
@@ -165,8 +176,10 @@ class BookingServiceImplTest {
             // Refund amount = 900_000
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("900000");
 
-            // IAM addCoins called with 900 coins
-            verify(iamClient).addCoins(eq(42), eq(new BigDecimal("900")));
+            // IAM is NOT called directly — coin refund is deferred to outbox
+            verify(iamClient, never()).addCoins(any(), any(), any());
+            // 2 outbox events: COIN_REFUND + STATUS_UPDATED notification
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
 
             // Booking saved with CANCELLED status
             ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
@@ -192,7 +205,9 @@ class BookingServiceImplTest {
             BookingResponse resp = service.cancelBooking(req);
 
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("630000");
-            verify(iamClient).addCoins(eq(55), eq(new BigDecimal("630")));
+            // Coin refund deferred via outbox (COIN_REFUND + STATUS_UPDATED = 2 events)
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
+            verify(iamClient, never()).addCoins(any(), any(), any());
         }
 
         @Test
@@ -212,7 +227,7 @@ class BookingServiceImplTest {
             BookingResponse resp = service.cancelBooking(req);
 
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("500000");
-            verify(iamClient).addCoins(eq(10), eq(new BigDecimal("500")));
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
         }
 
         @Test
@@ -232,7 +247,7 @@ class BookingServiceImplTest {
             BookingResponse resp = service.cancelBooking(req);
 
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("300000");
-            verify(iamClient).addCoins(eq(10), eq(new BigDecimal("300")));
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
         }
 
         @Test
@@ -252,11 +267,11 @@ class BookingServiceImplTest {
             BookingResponse resp = service.cancelBooking(req);
 
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("100000");
-            verify(iamClient).addCoins(eq(10), eq(new BigDecimal("100")));
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
         }
 
         @Test
-        @DisplayName("EDGE CASE: past departure → 100% fee → 0 refund → addCoins NOT called")
+        @DisplayName("EDGE CASE: past departure → 100% fee → 0 refund → no COIN_REFUND outbox event")
         void cancelBooking_pastDeparture_noRefund_noCoins() {
             // totalPrice=1_000_000
             // -5 days (past) → fee=100% → refundable = 0 → no coins
@@ -272,8 +287,9 @@ class BookingServiceImplTest {
             BookingResponse resp = service.cancelBooking(req);
 
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("0");
-            // addCoins must NOT be called when refund is 0
-            verify(iamClient, never()).addCoins(any(), any());
+            // No coin refund when refund is 0 — only 1 notification outbox event
+            verify(outboxRepository, times(1)).save(any(OutboxEvent.class));
+            verify(iamClient, never()).addCoins(any(), any(), any());
             assertThat(resp.getBookingStatus()).isEqualTo("CANCELLED");
         }
 
@@ -294,7 +310,7 @@ class BookingServiceImplTest {
 
             // Long.MAX_VALUE > 15 → fee=10% → refundable=900_000
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("900000");
-            verify(iamClient).addCoins(eq(10), eq(new BigDecimal("900")));
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
         }
 
         @Test
@@ -317,7 +333,7 @@ class BookingServiceImplTest {
 
             // 1999 * 0.9 = 1799.1 → floor = 1799 VND → floor(1799/1000) = 1 coin
             assertThat(resp.getRefundAmount()).isEqualByComparingTo("1799");
-            verify(iamClient).addCoins(eq(10), eq(new BigDecimal("1")));
+            verify(outboxRepository, times(2)).save(any(OutboxEvent.class));
         }
 
         @Test
@@ -349,28 +365,28 @@ class BookingServiceImplTest {
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("already cancelled");
 
-            verify(iamClient, never()).addCoins(any(), any());
+            verify(iamClient, never()).addCoins(any(), any(), any());
             verify(bookingRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("ERROR CASE: IAM service down → RuntimeException (booking NOT saved)")
-        void cancelBooking_iamServiceDown_throwsException_noBookingSaved() {
+        @DisplayName("OUTBOX: cancelBooking with zero refund saves only 1 outbox event (notification only)")
+        void cancelBooking_zeroRefund_onlyOneOutboxEvent() {
+            // Past departure → 100% fee → 0 refund → no COIN_REFUND event
             Booking booking = makePaidBooking(11, 10, new BigDecimal("1000000"), BigDecimal.ZERO);
             when(bookingRepository.findById(11)).thenReturn(Optional.of(booking));
-            when(tourCatalogClient.getDepartureInfo(any())).thenReturn(depInfoDaysFromNow(20));
-            doThrow(new RuntimeException("Feign error")).when(iamClient).addCoins(any(), any());
+            when(tourCatalogClient.getDepartureInfo(any())).thenReturn(depInfoDaysFromNow(-5));
+            when(bookingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             CancelBookingRequest req = new CancelBookingRequest();
             req.setBookingID(11);
-            req.setCancelReason("Test");
+            req.setCancelReason("Past departure");
 
-            assertThatThrownBy(() -> service.cancelBooking(req))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("Không thể cộng xu");
+            service.cancelBooking(req);
 
-            // Booking must NOT be saved if coin credit fails
-            verify(bookingRepository, never()).save(any());
+            // Only 1 outbox event: STATUS_UPDATED notification (no coin refund)
+            verify(outboxRepository, times(1)).save(any(OutboxEvent.class));
+            verify(iamClient, never()).addCoins(any(), any(), any());
         }
 
         @Test
@@ -423,8 +439,10 @@ class BookingServiceImplTest {
             // Status must be PENDING_REFUND
             assertThat(resp.getBookingStatus()).isEqualTo("PENDING_REFUND");
 
-            // IAM addCoins must NOT be called (bank refund needs admin)
-            verify(iamClient, never()).addCoins(any(), any());
+            // IAM is never called directly for bank refund path (needs admin approval)
+            verify(iamClient, never()).addCoins(any(), any(), any());
+            // One outbox event saved: REFUND_REQUESTED notification
+            verify(outboxRepository, times(1)).save(any(OutboxEvent.class));
 
             // RefundInformation saved with correct data
             ArgumentCaptor<RefundInformation> refundCaptor = ArgumentCaptor.forClass(RefundInformation.class);
@@ -457,7 +475,7 @@ class BookingServiceImplTest {
             BookingResponse resp = service.submitRefundRequest(21, req);
 
             assertThat(resp.getBookingStatus()).isEqualTo("PENDING_REFUND");
-            verify(iamClient, never()).addCoins(any(), any());
+            verify(iamClient, never()).addCoins(any(), any(), any());
         }
 
         @Test
@@ -571,8 +589,10 @@ class BookingServiceImplTest {
 
             service.submitRefundRequest(26, req);
 
-            // Bank refund needs admin approval — coins must NEVER be added here
-            verify(iamClient, never()).addCoins(any(), any());
+            // Bank refund needs admin approval — IAM is never called directly here
+            verify(iamClient, never()).addCoins(any(), any(), any());
+            // One outbox event for REFUND_REQUESTED notification
+            verify(outboxRepository, times(1)).save(any(OutboxEvent.class));
         }
     }
 
@@ -588,7 +608,6 @@ class BookingServiceImplTest {
             when(bookingRepository.findById(100)).thenReturn(Optional.of(booking));
             when(tourCatalogClient.getDepartureInfo(any())).thenReturn(depInfoDaysFromNow(days));
             when(bookingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-            doNothing().when(iamClient).addCoins(any(), any());
 
             CancelBookingRequest req = new CancelBookingRequest();
             req.setBookingID(100);

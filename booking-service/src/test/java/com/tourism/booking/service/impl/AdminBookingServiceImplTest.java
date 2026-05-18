@@ -1,11 +1,14 @@
 package com.tourism.booking.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.booking.convert.BookingConverter;
 import com.tourism.booking.dto.request.AdminSearchBookingRequest;
 import com.tourism.booking.dto.request.AdminUpdateStatusRequest;
 import com.tourism.booking.dto.response.BookingResponse;
+import com.tourism.booking.dto.sepay.TransactionVerificationDTO;
 import com.tourism.booking.entity.Booking;
 import com.tourism.booking.entity.BookingStatus;
+import com.tourism.booking.entity.OutboxEvent;
 import com.tourism.booking.feign.NotificationFeignClient;
 import com.tourism.booking.feign.PaymentFeignClient;
 import com.tourism.booking.feign.TourCatalogFeignClient;
@@ -13,7 +16,9 @@ import com.tourism.booking.feign.IamFeignClient;
 import com.tourism.booking.feign.dto.DepartureInfoResponse;
 import com.tourism.booking.feign.dto.PaymentInfoResponse;
 import com.tourism.booking.repository.BookingRepository;
+import com.tourism.booking.repository.OutboxEventRepository;
 import com.tourism.booking.repository.RefundInformationRepository;
+import com.tourism.booking.service.SepayService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -53,11 +58,14 @@ class AdminBookingServiceImplTest {
 
     @Mock private BookingRepository          bookingRepository;
     @Mock private RefundInformationRepository refundRepository;
+    @Mock private OutboxEventRepository       outboxRepository;
     @Mock private TourCatalogFeignClient     tourCatalogClient;
     @Mock private PaymentFeignClient         paymentClient;
     @Mock private IamFeignClient             iamClient;
     @Mock private NotificationFeignClient    notificationClient;
     @Mock private BookingConverter           bookingConverter;
+    @Mock private SepayService              sepayService;
+    @Mock private ObjectMapper              objectMapper;
 
     @InjectMocks
     private BookingServiceImpl service;
@@ -88,10 +96,20 @@ class AdminBookingServiceImplTest {
     }
 
     @BeforeEach
-    void stubFeign() {
+    void stubFeign() throws Exception {
         // Suppress Feign calls — not the focus of these tests
         lenient().doThrow(new RuntimeException("No feign")).when(tourCatalogClient).getDepartureInfo(anyInt());
         lenient().doThrow(new RuntimeException("No feign")).when(paymentClient).getPaymentByBooking(anyInt());
+        // ObjectMapper stub: return valid JSON for any object (used by OutboxEventFactory)
+        lenient().when(objectMapper.writeValueAsString(any())).thenReturn("{\"stub\":true}");
+        // OutboxEvent save: return entity unchanged
+        lenient().when(outboxRepository.save(any(OutboxEvent.class))).thenAnswer(inv -> inv.getArgument(0));
+        // SePay: default verified (needed for PAID/PENDING_CONFIRMATION → CANCELLED tests)
+        TransactionVerificationDTO verified = new TransactionVerificationDTO();
+        verified.setVerified(true);
+        verified.setTransactionReference("TEST-REF-001");
+        lenient().when(sepayService.verifyRefundTransaction(any(), any(), any(), any(), any())).thenReturn(verified);
+        lenient().when(sepayService.generateTransferContent(any())).thenReturn("TRANSFER-CONTENT");
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -168,7 +186,8 @@ class AdminBookingServiceImplTest {
 
             assertThat(result.getBookingStatus()).isEqualTo("PAID");
             verify(bookingRepository).save(argThat(b -> b.getBookingStatus() == BookingStatus.PAID));
-            verify(notificationClient).notifyBookingConfirmed(any());
+            // Outbox event saved for BOOKING_CONFIRMED notification
+            verify(outboxRepository).save(any(OutboxEvent.class));
         }
 
         @Test
@@ -185,7 +204,7 @@ class AdminBookingServiceImplTest {
                     .hasMessageContaining("Chỉ có thể xác nhận");
 
             verify(bookingRepository, never()).save(any());
-            verify(notificationClient, never()).notifyBookingConfirmed(any());
+            verify(outboxRepository, never()).save(any());
         }
     }
 
@@ -216,7 +235,8 @@ class AdminBookingServiceImplTest {
             verify(bookingRepository).save(argThat(b ->
                     b.getBookingStatus() == BookingStatus.CANCELLED &&
                     b.getRefundAmount() == null));
-            verify(notificationClient).notifyStatusUpdated(any());
+            // Outbox event saved for STATUS_UPDATED notification
+            verify(outboxRepository).save(any(OutboxEvent.class));
         }
     }
 
@@ -246,7 +266,8 @@ class AdminBookingServiceImplTest {
             verify(bookingRepository).save(argThat(b ->
                     b.getBookingStatus() == BookingStatus.CANCELLED &&
                     new BigDecimal("5500000").compareTo(b.getRefundAmount()) == 0));
-            verify(notificationClient).notifyStatusUpdated(any());
+            // Outbox event saved for REFUND_COMPLETED notification
+            verify(outboxRepository).save(any(OutboxEvent.class));
         }
 
         @Test
@@ -330,29 +351,27 @@ class AdminBookingServiceImplTest {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // 7. Notification fire-and-forget — notification failure should NOT fail booking
+    // 7. Outbox transactional safety
     // ═════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("Notification failure should NOT roll back booking update")
+    @DisplayName("Outbox event saved even if notification service is down (transactional safety)")
     void notificationFailureShouldNotRollBack() {
         Booking booking = makeBooking(9, BookingStatus.PENDING_CONFIRMATION);
         when(bookingRepository.findById(9)).thenReturn(Optional.of(booking));
         when(bookingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(bookingConverter.toResponse(any())).thenAnswer(inv -> makeResponse(inv.getArgument(0)));
 
-        // Notification service throws
-        doThrow(new RuntimeException("Notification service down"))
-                .when(notificationClient).notifyBookingConfirmed(any());
-
         AdminUpdateStatusRequest req = AdminUpdateStatusRequest.builder()
                 .bookingID(9).bookingStatus("PAID").build();
 
-        // Should NOT throw — notification failure is caught internally
+        // Should NOT throw — outbox is transactional DB save, not a Feign call
         assertThatNoException()
                 .isThrownBy(() -> service.adminUpdateBookingStatus(req));
 
         // Booking was still saved
         verify(bookingRepository).save(argThat(b -> b.getBookingStatus() == BookingStatus.PAID));
+        // Outbox event saved for downstream notification
+        verify(outboxRepository).save(any(OutboxEvent.class));
     }
 }

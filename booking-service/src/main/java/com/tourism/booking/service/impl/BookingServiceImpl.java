@@ -15,11 +15,14 @@ import com.tourism.booking.feign.PaymentFeignClient;
 import com.tourism.booking.feign.TourCatalogFeignClient;
 import com.tourism.booking.feign.dto.DepartureInfoResponse;
 import com.tourism.booking.feign.dto.PaymentInfoResponse;
+import com.tourism.booking.messaging.OutboxEventFactory;
 import com.tourism.booking.repository.BookingRepository;
+import com.tourism.booking.repository.OutboxEventRepository;
 import com.tourism.booking.repository.RefundInformationRepository;
 import com.tourism.booking.dto.sepay.TransactionVerificationDTO;
 import com.tourism.booking.service.BookingService;
 import com.tourism.booking.service.SepayService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,12 +46,14 @@ public class BookingServiceImpl implements BookingService {
 
     private final BookingRepository           bookingRepository;
     private final RefundInformationRepository refundRepository;
+    private final OutboxEventRepository       outboxRepository;
     private final TourCatalogFeignClient      tourCatalogClient;
     private final PaymentFeignClient          paymentClient;
     private final IamFeignClient              iamClient;
     private final NotificationFeignClient     notificationClient;
     private final BookingConverter            bookingConverter;
     private final SepayService               sepayService;
+    private final ObjectMapper               objectMapper;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
 
@@ -126,48 +131,38 @@ public class BookingServiceImpl implements BookingService {
         // Calculate refundable amount: (totalPrice + paidByCoin) * (1 - feePercent), rounded DOWN
         BigDecimal refundableAmount = calculateRefundableAmount(booking);
 
-        // Convert VND → coins (1000 VND = 1 coin) and credit to user
+        // Convert VND → coins (1000 VND = 1 coin)
         BigDecimal coinRefundAmount = refundableAmount.divide(COIN_RATE, 0, RoundingMode.DOWN);
-        if (coinRefundAmount.compareTo(BigDecimal.ZERO) > 0 && booking.getUserId() != null) {
-            try {
-                iamClient.addCoins(booking.getUserId(), coinRefundAmount);
-                log.info("Added {} coins to userId={} for booking cancellation", coinRefundAmount, booking.getUserId());
-            } catch (Exception e) {
-                log.error("Failed to add coins to userId={}: {}", booking.getUserId(), e.getMessage());
-                throw new RuntimeException("Không thể cộng xu cho người dùng. Vui lòng thử lại.");
-            }
-        }
 
-        // Always CANCELLED (not PENDING_REFUND) for coin-refund path
+        // ── ATOMIC: save booking + outbox events in ONE transaction ───────────
         booking.setBookingStatus(BookingStatus.CANCELLED);
         booking.setRefundAmount(refundableAmount);
 
-        BookingResponse saved = toResponse(bookingRepository.save(booking));
-
-        // Gọi notification-service trực tiếp (fire-and-forget)
-        try {
-            notificationClient.notifyStatusUpdated(BookingEventDTO.builder()
-                .bookingID(booking.getBookingID())
-                .bookingCode(booking.getBookingCode())
-                .bookingStatus("CANCELLED")
-                .cancelReason(booking.getCancelReason())
-                .contactFullName(booking.getContactFullName())
-                .contactEmail(booking.getContactEmail())
-                .contactPhone(booking.getContactPhone())
-                .totalPrice(booking.getTotalPrice())
-                .paidByCoin(booking.getPaidByCoin())
-                .refundAmount(refundableAmount)
-                .coinRefundAmount(coinRefundAmount)
-                .userId(booking.getUserId())
-                .tourName(saved.getTourName())
-                .tourCode(saved.getTourCode())
-                .departureDate(saved.getDepartureDate())
-                .build());
-        } catch (Exception e) {
-            log.error("Failed to notify status update for booking {}: {}", saved.getBookingCode(), e.getMessage());
+        // Set coinRefundStatus = PENDING khi có coin refund (cùng transaction với outbox)
+        if (coinRefundAmount.compareTo(BigDecimal.ZERO) > 0 && booking.getUserId() != null) {
+            booking.setCoinRefundStatus("PENDING");
         }
 
-        return saved;
+        Booking saved = bookingRepository.save(booking);
+        BookingResponse res = toResponse(saved);
+
+        // Outbox: COIN_REFUND (relay via Feign to IAM — idempotent via coin_transactions)
+        if (coinRefundAmount.compareTo(BigDecimal.ZERO) > 0 && saved.getUserId() != null) {
+            BookingEventDTO coinDto = buildBaseEventDto(saved, res, "CANCELLED",
+                    refundableAmount, null, null, null, request.getCancelReason());
+            coinDto.setCoinRefundAmount(coinRefundAmount);
+            outboxRepository.save(OutboxEventFactory.coinRefund(coinDto, objectMapper));
+            log.info("Queued COIN_REFUND outbox: {} coins for userId={}, booking={}",
+                    coinRefundAmount, saved.getUserId(), saved.getBookingCode());
+        }
+
+        // Outbox: notification (relay via RabbitMQ to notification-service)
+        BookingEventDTO notifDto = buildBaseEventDto(saved, res, "CANCELLED",
+                refundableAmount, null, null, null, request.getCancelReason());
+        notifDto.setCoinRefundAmount(coinRefundAmount);
+        outboxRepository.save(OutboxEventFactory.notification(notifDto, "STATUS_UPDATED", objectMapper));
+
+        return res;
     }
 
     // ── Submit refund request (BANK refund path — same as monolith) ──────────
@@ -208,30 +203,13 @@ public class BookingServiceImpl implements BookingService {
 
         BookingResponse saved = toResponse(bookingRepository.save(booking));
 
-        // Gọi notification-service trực tiếp (fire-and-forget)
-        try {
-            notificationClient.notifyRefundRequested(BookingEventDTO.builder()
-                .bookingID(booking.getBookingID())
-                .bookingCode(booking.getBookingCode())
-                .bookingStatus("PENDING_REFUND")
-                .contactFullName(booking.getContactFullName())
-                .contactEmail(booking.getContactEmail())
-                .contactPhone(booking.getContactPhone())
-                .contactAddress(booking.getContactAddress())
-                .totalPrice(booking.getTotalPrice())
-                .paidByCoin(booking.getPaidByCoin())
-                .refundAmount(totalRefundAmount)
-                .refundBank(request.getBank())
-                .refundAccountNumber(request.getAccountNumber())
-                .refundAccountName(request.getAccountName())
-                .userId(booking.getUserId())
-                .tourName(saved.getTourName())
-                .tourCode(saved.getTourCode())
-                .departureDate(saved.getDepartureDate())
-                .build());
-        } catch (Exception e) {
-            log.error("Failed to notify refund request for booking {}: {}", saved.getBookingCode(), e.getMessage());
-        }
+        // Outbox: REFUND_REQUESTED notification (relay via RabbitMQ)
+        BookingEventDTO dto = buildBaseEventDto(
+                booking, saved, "PENDING_REFUND",
+                totalRefundAmount,
+                request.getBank(), request.getAccountNumber(), request.getAccountName(),
+                null);
+        outboxRepository.save(OutboxEventFactory.notification(dto, "REFUND_REQUESTED", objectMapper));
 
         return saved;
     }
@@ -354,11 +332,12 @@ public class BookingServiceImpl implements BookingService {
                 Booking saved = bookingRepository.save(booking);
                 BookingResponse res = toResponse(saved);
 
-                // Notify: email xác nhận + WebSocket
-                fireNotification(() -> notificationClient.notifyBookingConfirmed(
-                        buildEventFrom(saved, res, "PAID", null, null, null)));
+                // Outbox: BOOKING_CONFIRMED notification
+                BookingEventDTO dto = buildBaseEventDto(saved, res, "PAID",
+                        null, null, null, null, null);
+                outboxRepository.save(OutboxEventFactory.notification(dto, "BOOKING_CONFIRMED", objectMapper));
 
-                log.info("Admin confirmed booking {} → PAID", booking.getBookingCode());
+                log.info("Admin confirmed booking {} → PAID, notification queued", booking.getBookingCode());
                 return res;
             }
 
@@ -378,14 +357,20 @@ public class BookingServiceImpl implements BookingService {
                         .contains(currentStatus);
 
                 if (requiresSepayCheck) {
-                    // Tính số tiền cần verify: admin cancel = full, không trừ phí
+                    // Tính số tiền cần verify:
+                    // - PENDING_REFUND: giữ nguyên refundAmount user đã request, không tính lại full
+                    // - PAID / PENDING_CONFIRMATION: admin tự hủy trực tiếp → hoàn full
                     BigDecimal totalPrice0 = booking.getTotalPrice() != null ? booking.getTotalPrice() : BigDecimal.ZERO;
                     BigDecimal paidByCoin0 = booking.getPaidByCoin() != null ? booking.getPaidByCoin() : BigDecimal.ZERO;
                     BigDecimal expectedAmount = totalPrice0.add(paidByCoin0);
 
                     // Nếu PENDING_REFUND đã có refundAmount lưu sẵn thì dùng luôn
-                    if ("PENDING_REFUND".equals(currentStatus) && booking.getRefundAmount() != null
-                            && booking.getRefundAmount().compareTo(BigDecimal.ZERO) > 0) {
+                    if ("PENDING_REFUND".equals(currentStatus)) {
+                        if (booking.getRefundAmount() == null
+                                || booking.getRefundAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                            throw new RuntimeException(
+                                    "Không tìm thấy số tiền hoàn đã lưu cho yêu cầu hoàn tiền.");
+                        }
                         expectedAmount = booking.getRefundAmount();
                     }
 
@@ -426,18 +411,26 @@ public class BookingServiceImpl implements BookingService {
                 booking.setBookingStatus(BookingStatus.CANCELLED);
                 booking.setCancelReason(request.getCancelReason());
 
-                // Calculate refund amount (full paid amount — no cancellation fee for admin path)
-                BigDecimal refundAmount = BigDecimal.ZERO;
-                boolean hasRefund = List.of("PENDING_CONFIRMATION", "PAID", "PENDING_REFUND")
-                        .contains(currentStatus);
+                BigDecimal refundAmount = booking.getRefundAmount() != null
+                        ? booking.getRefundAmount() : BigDecimal.ZERO;
 
-                if (hasRefund) {
+                if ("PENDING_REFUND".equals(currentStatus)) {
+                    // User đã gửi yêu cầu hoàn tiền ngân hàng: refundAmount đã được tính và lưu
+                    // ở submitRefundRequest(). Admin chỉ xác nhận đã chuyển khoản, không overwrite.
+                    if (refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                        throw new RuntimeException(
+                                "Không tìm thấy số tiền hoàn đã lưu cho yêu cầu hoàn tiền.");
+                    }
+                } else if (List.of("PENDING_CONFIRMATION", "PAID").contains(currentStatus)) {
+                    // Admin tự hủy trực tiếp: hoàn full số khách đã thanh toán + điểm đã dùng.
                     BigDecimal totalPrice = booking.getTotalPrice() != null
                             ? booking.getTotalPrice() : BigDecimal.ZERO;
                     BigDecimal paidByCoin = booking.getPaidByCoin() != null
                             ? booking.getPaidByCoin() : BigDecimal.ZERO;
                     refundAmount = totalPrice.add(paidByCoin);
                     booking.setRefundAmount(refundAmount);
+                } else {
+                    refundAmount = BigDecimal.ZERO;
                 }
 
                 Booking saved = bookingRepository.save(booking);
@@ -462,14 +455,14 @@ public class BookingServiceImpl implements BookingService {
                 final String fAccNum = refundAccNum;
                 final String fAccName = refundAccName;
 
-                // Notify: email + WebSocket
-                fireNotification(() -> notificationClient.notifyStatusUpdated(
-                        buildEventFrom(saved, res, "CANCELLED",
-                                finalRefund, fBank, fAccNum, fAccName,
-                                request.getCancelReason())));
+                // Outbox: REFUND_COMPLETED or STATUS_UPDATED notification
+                String eventType = requiresSepayCheck ? "REFUND_COMPLETED" : "STATUS_UPDATED";
+                BookingEventDTO dto = buildBaseEventDto(saved, res, "CANCELLED",
+                        finalRefund, fBank, fAccNum, fAccName, request.getCancelReason());
+                outboxRepository.save(OutboxEventFactory.notification(dto, eventType, objectMapper));
 
-                log.info("Admin cancelled booking {} (from {}), refund={}",
-                        booking.getBookingCode(), currentStatus, refundAmount);
+                log.info("Admin cancelled booking {} (from {}), refund={}, notification queued as {}",
+                        booking.getBookingCode(), currentStatus, refundAmount, eventType);
                 return res;
             }
 
@@ -481,49 +474,14 @@ public class BookingServiceImpl implements BookingService {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /** Fire-and-forget notification — never let it fail the main transaction */
-    private void fireNotification(Runnable notifyCall) {
-        try {
-            notifyCall.run();
-        } catch (Exception e) {
-            log.error("Failed to send notification: {}", e.getMessage());
-        }
-    }
-
-    /** Build event for PAID confirmation */
-    private BookingEventDTO buildEventFrom(Booking booking, BookingResponse res,
-                                            String status,
-                                            BigDecimal refundAmount,
-                                            String refundBank,
-                                            String refundAccNum) {
-        return BookingEventDTO.builder()
-                .bookingID(booking.getBookingID())
-                .bookingCode(booking.getBookingCode())
-                .bookingStatus(status)
-                .contactFullName(booking.getContactFullName())
-                .contactEmail(booking.getContactEmail())
-                .contactPhone(booking.getContactPhone())
-                .contactAddress(booking.getContactAddress())
-                .totalPrice(booking.getTotalPrice())
-                .paidByCoin(booking.getPaidByCoin())
-                .refundAmount(refundAmount)
-                .refundBank(refundBank)
-                .refundAccountNumber(refundAccNum)
-                .userId(booking.getUserId())
-                .tourName(res.getTourName())
-                .tourCode(res.getTourCode())
-                .departureDate(res.getDepartureDate())
-                .build();
-    }
-
-    /** Build event for CANCELLED — includes cancelReason + refund account */
-    private BookingEventDTO buildEventFrom(Booking booking, BookingResponse res,
-                                            String status,
-                                            BigDecimal refundAmount,
-                                            String refundBank,
-                                            String refundAccNum,
-                                            String refundAccName,
-                                            String cancelReason) {
+    /** Unified builder for all outbox event DTOs */
+    private BookingEventDTO buildBaseEventDto(Booking booking, BookingResponse res,
+                                              String status,
+                                              BigDecimal refundAmount,
+                                              String refundBank,
+                                              String refundAccNum,
+                                              String refundAccName,
+                                              String cancelReason) {
         return BookingEventDTO.builder()
                 .bookingID(booking.getBookingID())
                 .bookingCode(booking.getBookingCode())

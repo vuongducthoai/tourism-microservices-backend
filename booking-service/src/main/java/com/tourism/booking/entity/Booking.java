@@ -69,6 +69,18 @@ public class Booking extends BaseEntity {
 
     private BigDecimal refundAmount;
 
+    /**
+     * Trạng thái hoàn xu. Chỉ có giá trị khi booking bị cancel và
+     * coinRefundAmount > 0 && userId != null.
+     *
+     * null      – không có hoàn xu (coinRefundAmount = 0 hoặc không có userId)
+     * PENDING   – đã lưu outbox COIN_REFUND, chờ CoinRefundRelayScheduler
+     * COMPLETED – IAM đã cộng xu thành công (idempotent)
+     * FAILED    – outbox DEAD sau maxRetries=20 lần, admin cần can thiệp
+     */
+    @Column(name = "coin_refund_status", length = 20)
+    private String coinRefundStatus;
+
     @Enumerated(EnumType.STRING)
     private BookingStatus bookingStatus;
 

@@ -83,10 +83,10 @@ public class AdminBookingStatsController {
         // ── Daily revenue chart (selected range) ──
         List<DailyRevenueItem> dailyRevenue = buildDailyRevenue(rangeStartDT, rangeEndDT);
 
-        // ── Status distribution ──
+        // ── Status distribution 
         List<BookingStatusCountItem> statusDistribution = buildStatusDistribution();
 
-        // ── Hot tours (top 5 PAID) ──
+        // ── Hot tours (top 5 PAID)
         List<HotTourRawItem> hotTours = buildHotTours();
 
         // ── Tours needing attention ──

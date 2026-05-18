@@ -139,6 +139,108 @@ public class MailServiceImpl implements MailService {
     // ── Gửi email thông báo trạng thái booking cho khách hàng ────────────────
     @Async
     @Override
+    public void sendCancellationEmail(BookingEventDTO event) {
+        if (event.getContactEmail() == null || event.getContactEmail().isBlank()) {
+            log.warn("sendCancellationEmail: no customer email for booking {}", event.getBookingCode());
+            return;
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getContactEmail());
+            msg.setSubject("THÔNG BÁO HỦY TOUR: Booking Code " + nvl(event.getBookingCode()));
+
+            String body = String.format(
+                    "Kính gửi Quý khách %s,\n\n" +
+                    "Tour của Quý khách đã bị hủy.\n\n" +
+                    "--- THÔNG TIN BOOKING ---\n" +
+                    "Mã Booking    : %s\n" +
+                    "Tên Tour      : %s\n" +
+                    "Mã Tour       : %s\n" +
+                    "Ngày khởi hành: %s\n" +
+                    "Trạng thái    : Đã hủy\n\n" +
+                    "--- LÝ DO HỦY ---\n" +
+                    "%s\n\n" +
+                    "Nếu có thắc mắc, vui lòng liên hệ: %s\n\n" +
+                    "Trân trọng,\nFuture Travel Team",
+                    nvl(event.getContactFullName()),
+                    nvl(event.getBookingCode()),
+                    nvl(event.getTourName()),
+                    nvl(event.getTourCode()),
+                    event.getDepartureDate() != null ? event.getDepartureDate().toString() : "N/A",
+                    nvl(event.getCancelReason()),
+                    adminEmail
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Cancellation email sent to {} for booking {}",
+                    event.getContactEmail(), event.getBookingCode());
+        } catch (Exception e) {
+            log.error("Failed to send cancellation email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    @Async
+    @Override
+    public void sendCancellationWithRefundEmail(BookingEventDTO event) {
+        if (event.getContactEmail() == null || event.getContactEmail().isBlank()) {
+            log.warn("sendCancellationWithRefundEmail: no customer email for booking {}", event.getBookingCode());
+            return;
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getContactEmail());
+            msg.setSubject("THÔNG BÁO HỦY TOUR VÀ HOÀN TIỀN: Booking Code " + nvl(event.getBookingCode()));
+
+            BigDecimal refund = event.getRefundAmount() != null ? event.getRefundAmount() : BigDecimal.ZERO;
+            BigDecimal paidByCoin = event.getPaidByCoin() != null ? event.getPaidByCoin() : BigDecimal.ZERO;
+            String refundAccountInfo = buildRefundAccountInfo(event);
+
+            String body = String.format(
+                    "Kính gửi Quý khách %s,\n\n" +
+                    "Tour của Quý khách đã bị hủy và hệ thống đã ghi nhận thông tin hoàn tiền.\n\n" +
+                    "--- THÔNG TIN BOOKING ---\n" +
+                    "Mã Booking    : %s\n" +
+                    "Tên Tour      : %s\n" +
+                    "Mã Tour       : %s\n" +
+                    "Ngày khởi hành: %s\n" +
+                    "Trạng thái    : Đã hủy\n\n" +
+                    "--- LÝ DO HỦY ---\n" +
+                    "%s\n\n" +
+                    "--- THÔNG TIN HOÀN TIỀN ---\n" +
+                    "Số tiền hoàn: %s\n" +
+                    "Giá trị điểm cá nhân đã dùng được tính vào hoàn: %s\n" +
+                    "%s\n\n" +
+                    "Số tiền hoàn là số cuối cùng hệ thống ghi nhận trong đơn, bao gồm giá trị điểm cá nhân nếu đơn có sử dụng.\n\n" +
+                    "Nếu có thắc mắc, vui lòng liên hệ: %s\n\n" +
+                    "Trân trọng,\nFuture Travel Team",
+                    nvl(event.getContactFullName()),
+                    nvl(event.getBookingCode()),
+                    nvl(event.getTourName()),
+                    nvl(event.getTourCode()),
+                    event.getDepartureDate() != null ? event.getDepartureDate().toString() : "N/A",
+                    nvl(event.getCancelReason()),
+                    VND_FMT.format(refund),
+                    VND_FMT.format(paidByCoin),
+                    refundAccountInfo,
+                    adminEmail
+            );
+
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Cancellation refund email sent to {} for booking {}",
+                    event.getContactEmail(), event.getBookingCode());
+        } catch (Exception e) {
+            log.error("Failed to send cancellation refund email for booking {}: {}",
+                    event.getBookingCode(), e.getMessage());
+        }
+    }
+
+    @Async
+    @Override
     public void sendBookingStatusEmail(BookingEventDTO event) {
         // Placeholder: có thể mở rộng sau
         log.info("sendBookingStatusEmail called for booking {} status {}",
@@ -200,6 +302,26 @@ public class MailServiceImpl implements MailService {
             log.error("Failed to send cancellation admin email for booking {}: {}",
                     event.getBookingCode(), e.getMessage());
         }
+    }
+
+    private String buildRefundAccountInfo(BookingEventDTO event) {
+        if (!hasText(event.getRefundBank())
+                && !hasText(event.getRefundAccountNumber())
+                && !hasText(event.getRefundAccountName())) {
+            return "Thông tin tài khoản hoàn tiền: Chưa cung cấp";
+        }
+        return String.format(
+                "Ngân hàng    : %s\n" +
+                "Số tài khoản : %s\n" +
+                "Chủ tài khoản: %s",
+                nvl(event.getRefundBank()),
+                nvl(event.getRefundAccountNumber()),
+                nvl(event.getRefundAccountName())
+        );
+    }
+
+    private boolean hasText(String s) {
+        return s != null && !s.isBlank();
     }
 
     private String nvl(String s) {

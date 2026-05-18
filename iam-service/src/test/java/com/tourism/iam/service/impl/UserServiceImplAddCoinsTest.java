@@ -1,6 +1,7 @@
 package com.tourism.iam.service.impl;
 
 import com.tourism.iam.entity.User;
+import com.tourism.iam.repository.CoinTransactionRepository;
 import com.tourism.iam.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -31,6 +32,8 @@ class UserServiceImplAddCoinsTest {
     // Cloudinary is required by constructor — mock it
     @Mock com.cloudinary.Cloudinary cloudinary;
 
+    @Mock CoinTransactionRepository coinTransactionRepository;
+
     @InjectMocks UserServiceImpl service;
 
     private User makeUser(int id, BigDecimal coinBalance) {
@@ -52,8 +55,10 @@ class UserServiceImplAddCoinsTest {
             User user = makeUser(1, BigDecimal.ZERO);
             when(userRepository.findById(1)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(coinTransactionRepository.existsByOperationKey(any())).thenReturn(false);
+            when(coinTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.addCoins(1, new BigDecimal("900"));
+            service.addCoins(1, new BigDecimal("900"), "key-1");
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -66,8 +71,10 @@ class UserServiceImplAddCoinsTest {
             User user = makeUser(2, new BigDecimal("500"));
             when(userRepository.findById(2)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(coinTransactionRepository.existsByOperationKey(any())).thenReturn(false);
+            when(coinTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.addCoins(2, new BigDecimal("300"));
+            service.addCoins(2, new BigDecimal("300"), "key-2");
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -80,8 +87,10 @@ class UserServiceImplAddCoinsTest {
             User user = makeUser(3, null);
             when(userRepository.findById(3)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(coinTransactionRepository.existsByOperationKey(any())).thenReturn(false);
+            when(coinTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.addCoins(3, new BigDecimal("100"));
+            service.addCoins(3, new BigDecimal("100"), "key-3");
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -94,8 +103,10 @@ class UserServiceImplAddCoinsTest {
             User user = makeUser(4, new BigDecimal("250"));
             when(userRepository.findById(4)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(coinTransactionRepository.existsByOperationKey(any())).thenReturn(false);
+            when(coinTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.addCoins(4, BigDecimal.ZERO);
+            service.addCoins(4, BigDecimal.ZERO, "key-4");
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -108,8 +119,10 @@ class UserServiceImplAddCoinsTest {
             User user = makeUser(5, new BigDecimal("9999"));
             when(userRepository.findById(5)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(coinTransactionRepository.existsByOperationKey(any())).thenReturn(false);
+            when(coinTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.addCoins(5, new BigDecimal("1000000"));
+            service.addCoins(5, new BigDecimal("1000000"), "key-5");
 
             ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
             verify(userRepository).save(captor.capture());
@@ -121,11 +134,23 @@ class UserServiceImplAddCoinsTest {
         void addCoins_userNotFound_throwsException() {
             when(userRepository.findById(999)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.addCoins(999, new BigDecimal("100")))
+            assertThatThrownBy(() -> service.addCoins(999, new BigDecimal("100"), "key-x"))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("User not found: 999");
 
             verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("IDEMPOTENCY: duplicate operationKey → skip, balance unchanged, user NOT saved again")
+        void addCoins_duplicateOperationKey_skipped() {
+            when(coinTransactionRepository.existsByOperationKey("dup-key")).thenReturn(true);
+
+            service.addCoins(1, new BigDecimal("500"), "dup-key");
+
+            verify(userRepository, never()).findById(any());
+            verify(userRepository, never()).save(any());
+            verify(coinTransactionRepository, never()).save(any());
         }
     }
 }

@@ -10,6 +10,12 @@ public interface MailService {
     /** Gửi email xác nhận hủy tour cho khách hàng (coin path) */
     void sendCancellationCoinEmail(BookingEventDTO event);
 
+    /** Gui email huy tour cho khach hang khi khong co hoan tien */
+    void sendCancellationEmail(BookingEventDTO event);
+
+    /** Gui email huy tour kem thong tin hoan tien ngan hang cho khach hang */
+    void sendCancellationWithRefundEmail(BookingEventDTO event);
+
     /** Gửi email xác nhận trạng thái booking cho khách hàng */
     void sendBookingStatusEmail(BookingEventDTO event);
 
