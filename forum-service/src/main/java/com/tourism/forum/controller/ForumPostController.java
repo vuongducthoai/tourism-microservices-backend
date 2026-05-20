@@ -3,9 +3,11 @@ package com.tourism.forum.controller;
 import com.tourism.forum.dto.request.CommentRequest;
 import com.tourism.forum.dto.request.CreatePostRequest;
 import com.tourism.forum.dto.request.PostFilterRequest;
+import com.tourism.forum.dto.request.PostUpdateRequest;
 import com.tourism.forum.dto.response.PostDetailResponse;
 import com.tourism.forum.dto.response.PostListResponse;
 import com.tourism.forum.service.ForumService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -33,7 +35,8 @@ public class ForumPostController {
             @RequestParam(required = false) Integer categoryId,
             @RequestParam(required = false) Integer tagId,
             @RequestParam(required = false) String postType,
-            @RequestParam(required = false) String search
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Integer userId
     ) {
         Sort sort = Sort.by(Sort.Direction.fromString(sortDirection), sortBy);
         Pageable pageable = PageRequest.of(page, size, sort);
@@ -41,27 +44,31 @@ public class ForumPostController {
                 .categoryId(categoryId).tagId(tagId)
                 .postType(postType).search(search)
                 .build();
-        Page<PostListResponse> posts = forumService.getPosts(filter, pageable);
+        Page<PostListResponse> posts = forumService.getPosts(filter, pageable, userId);
         return ResponseEntity.ok(Map.of("success", true, "data", posts));
     }
 
     @GetMapping("/trending")
     public ResponseEntity<?> getTrendingPosts(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "5") int size
+            @RequestParam(defaultValue = "5") int size,
+            @RequestParam(required = false) Integer userId
     ) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(Map.of("success", true, "data", forumService.getTrendingPosts(pageable)));
+        return ResponseEntity.ok(Map.of("success", true,
+                "data", forumService.getTrendingPosts(pageable, userId)));
     }
 
     @GetMapping("/user/{userId}")
     public ResponseEntity<?> getPostsByUser(
             @PathVariable Integer userId,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) Integer viewerId
     ) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        return ResponseEntity.ok(Map.of("success", true, "data", forumService.getPostsByUser(userId, pageable)));
+        return ResponseEntity.ok(Map.of("success", true,
+                "data", forumService.getPostsByUser(userId, pageable, viewerId)));
     }
 
     @PostMapping
@@ -77,6 +84,29 @@ public class ForumPostController {
     ) {
         PostDetailResponse post = forumService.getPostDetail(postId, userId);
         return ResponseEntity.ok(Map.of("success", true, "data", post));
+    }
+
+    @PostMapping("/{postId}/view")
+    public ResponseEntity<?> recordView(
+            @PathVariable Integer postId,
+            @RequestParam(required = false) Integer userId,
+            HttpServletRequest httpRequest
+    ) {
+        // Identify the viewer: prefer logged-in userId, fall back to client IP.
+        String viewerKey;
+        if (userId != null) {
+            viewerKey = "u" + userId;
+        } else {
+            String ip = httpRequest.getHeader("X-Forwarded-For");
+            if (ip == null || ip.isBlank()) {
+                ip = httpRequest.getRemoteAddr();
+            } else {
+                ip = ip.split(",")[0].trim();
+            }
+            viewerKey = "ip" + ip;
+        }
+        forumService.recordView(postId, viewerKey);
+        return ResponseEntity.ok(Map.of("success", true));
     }
 
     @PostMapping("/{postId}/like")
@@ -118,5 +148,73 @@ public class ForumPostController {
     @GetMapping("/user/stats")
     public ResponseEntity<?> getUserStats(@RequestParam Integer userId) {
         return ResponseEntity.ok(Map.of("success", true, "data", forumService.getUserStats(userId)));
+    }
+
+    @PostMapping("/{postId}/bookmark")
+    public ResponseEntity<?> toggleBookmark(
+            @PathVariable Integer postId,
+            @RequestParam Integer userId
+    ) {
+        boolean isBookmarked = forumService.toggleBookmark(postId, userId);
+        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("isBookmarked", isBookmarked)));
+    }
+
+    @GetMapping("/{postId}/bookmark-check")
+    public ResponseEntity<?> checkBookmarkStatus(
+            @PathVariable Integer postId,
+            @RequestParam(required = false) Integer userId
+    ) {
+        boolean isBookmarked = forumService.checkBookmarkStatus(postId, userId);
+        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("isBookmarked", isBookmarked)));
+    }
+
+    @PutMapping("/{postId}")
+    public ResponseEntity<?> updatePost(
+            @PathVariable Integer postId,
+            @Valid @RequestBody PostUpdateRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        Integer userId = extractUserIdFromToken(httpRequest);
+        PostDetailResponse response = forumService.updatePost(postId, request, userId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Cập nhật bài viết thành công", "data", response));
+    }
+
+    @DeleteMapping("/{postId}")
+    public ResponseEntity<?> deletePost(
+            @PathVariable Integer postId,
+            HttpServletRequest httpRequest
+    ) {
+        Integer userId = extractUserIdFromToken(httpRequest);
+        forumService.deletePost(postId, userId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Xóa bài viết thành công"));
+    }
+
+    private Integer extractUserIdFromToken(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            // Simple extraction for dev-token format: "dev-token-{timestamp}..."
+            // For actual userId, we need the current user context  from auth header
+            // For now, extract userId 2 as default for dev/test token
+            try {
+                // Extract number after "dev-token-"
+                String afterPrefix = token.substring(10); // Remove "dev-token-"
+                String[] parts = afterPrefix.split("-");
+                if (parts.length > 0) {
+                    // Try to parse the first numeric part as userId
+                    // If it's a timestamp, default to userId 2 for testing
+                    Long num = Long.parseLong(parts[0]);
+                    if (num > 1000000) {
+                        // Likely a timestamp, use default user 2
+                        return 2;
+                    }
+                    return num.intValue();
+                }
+            } catch (Exception e) {
+                // Default to user 2 if extraction fails
+                return 2;
+            }
+        }
+        return null;
     }
 }

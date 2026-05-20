@@ -12,5 +12,4 @@ import lombok.NoArgsConstructor;
 public class AdminMediaResponse {
     private Integer tourMediaID;
     private String mediaUrl;
-    private String mediaType;
 }

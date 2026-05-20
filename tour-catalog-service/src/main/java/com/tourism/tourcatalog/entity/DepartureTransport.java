@@ -16,8 +16,9 @@ public class DepartureTransport extends BaseEntity {
     private Integer transportID;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "type")
     private TransportType transportType;
-
+    
     @Enumerated(EnumType.STRING)
     private VehicleType vehicleType;
 

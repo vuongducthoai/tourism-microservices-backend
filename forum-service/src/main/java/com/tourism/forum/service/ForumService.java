@@ -3,6 +3,7 @@ package com.tourism.forum.service;
 import com.tourism.forum.dto.request.CommentRequest;
 import com.tourism.forum.dto.request.CreatePostRequest;
 import com.tourism.forum.dto.request.PostFilterRequest;
+import com.tourism.forum.dto.request.PostUpdateRequest;
 import com.tourism.forum.dto.response.CategoryResponse;
 import com.tourism.forum.dto.response.PostDetailResponse;
 import com.tourism.forum.dto.response.PostListResponse;
@@ -16,13 +17,25 @@ public interface ForumService {
 
     Page<PostListResponse> getPosts(PostFilterRequest filter, Pageable pageable);
 
+    Page<PostListResponse> getPosts(PostFilterRequest filter, Pageable pageable, Integer currentUserId);
+
     Page<PostListResponse> getTrendingPosts(Pageable pageable);
 
+    Page<PostListResponse> getTrendingPosts(Pageable pageable, Integer currentUserId);
+
     Page<PostListResponse> getPostsByUser(Integer userId, Pageable pageable);
+
+    Page<PostListResponse> getPostsByUser(Integer userId, Pageable pageable, Integer currentUserId);
 
     PostDetailResponse createPost(CreatePostRequest request);
 
     PostDetailResponse getPostDetail(Integer postId, Integer currentUserId);
+
+    void recordView(Integer postId, String viewerKey);
+
+    PostDetailResponse updatePost(Integer postId, PostUpdateRequest request, Integer userId);
+
+    void deletePost(Integer postId, Integer userId);
 
     void toggleLike(Integer postId, Integer userId);
 
@@ -39,4 +52,8 @@ public interface ForumService {
     List<PostListResponse.TagInfo> getPopularTags(int limit);
 
     Map<String, Long> getUserStats(Integer userId);
+
+    boolean toggleBookmark(Integer postId, Integer userId);
+
+    boolean checkBookmarkStatus(Integer postId, Integer userId);
 }
