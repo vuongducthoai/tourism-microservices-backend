@@ -46,6 +46,14 @@ public interface TourDepartureRepository extends JpaRepository<TourDeparture, In
             """)
     int decreaseAvailableSlots(@Param("departureId") Integer departureId, @Param("count") int count);
 
+    @Modifying
+    @Query("""
+            UPDATE TourDeparture d
+            SET d.availableSlots = d.availableSlots + :count
+            WHERE d.departureID = :departureId
+            """)
+    int increaseAvailableSlots(@Param("departureId") Integer departureId, @Param("count") int count);
+
     Page<TourDeparture> findAllByIsDeletedFalse(Pageable pageable);
 
     Page<TourDeparture> findAllByStatusAndIsDeletedFalse(Boolean status, Pageable pageable);

@@ -9,4 +9,5 @@ public interface GeminiAIService {
     List<DashboardStatsDTO.Insight> generateInsights(String context);
     List<DashboardStatsDTO.Prediction> generatePredictions(String context);
     List<DashboardStatsDTO.Recommendation> generateRecommendations(String context);
+    DashboardStatsDTO.AIAnalysis generateFullAnalysis(String context);
 }

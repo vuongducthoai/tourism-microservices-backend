@@ -269,6 +269,26 @@ public class BookingServiceImpl implements BookingService {
         }
     }
 
+    private void releaseSlots(Booking booking) {
+        if (booking.getDepartureId() == null) return;
+        int seatCount = 0;
+        if (booking.getPassengers() != null) {
+            seatCount = (int) booking.getPassengers().stream()
+                    .filter(p -> p.getPassengerType() != null && p.getPassengerType() != PassengerType.INFANT)
+                    .count();
+        }
+        if (seatCount > 0) {
+            try {
+                tourCatalogClient.increaseSlots(booking.getDepartureId(), seatCount);
+                log.info("Released {} slots for departure {} (booking {})",
+                        seatCount, booking.getDepartureId(), booking.getBookingCode());
+            } catch (Exception e) {
+                log.warn("Could not release slots for departure {}: {}",
+                        booking.getDepartureId(), e.getMessage());
+            }
+        }
+    }
+
     private BookingOrderResponse.FlightInfo toFlightInfo(TourBookingInfoResponse.FlightInfo f) {
         BookingOrderResponse.FlightInfo fi = new BookingOrderResponse.FlightInfo();
         fi.setTransportCode(f.getTransportCode());
@@ -478,6 +498,9 @@ public class BookingServiceImpl implements BookingService {
         }
 
         Booking saved = bookingRepository.save(booking);
+
+        // Trả lại slot cho tour sau khi booking đã được lưu thành công
+        releaseSlots(saved);
         BookingResponse res = toResponse(saved);
 
         // Outbox: COIN_REFUND (relay via Feign to IAM — idempotent via coin_transactions)
@@ -536,6 +559,9 @@ public class BookingServiceImpl implements BookingService {
         booking.setRefundAmount(totalRefundAmount);
 
         BookingResponse saved = toResponse(bookingRepository.save(booking));
+
+        // Trả lại slot cho tour sau khi booking đã được lưu thành công
+        releaseSlots(booking);
 
         // Outbox: REFUND_REQUESTED notification (relay via RabbitMQ)
         BookingEventDTO dto = buildBaseEventDto(
@@ -768,6 +794,13 @@ public class BookingServiceImpl implements BookingService {
                 }
 
                 Booking saved = bookingRepository.save(booking);
+
+                // Trả lại slot cho tour sau khi booking đã được lưu thành công
+                // Không release lại nếu đã ở PENDING_REFUND (submitRefundRequest đã release rồi)
+                if (!"PENDING_REFUND".equals(currentStatus)) {
+                    releaseSlots(saved);
+                }
+
                 BookingResponse res = toResponse(saved);
 
                 // Resolve refund account: prefer RefundInformation, fallback Payment

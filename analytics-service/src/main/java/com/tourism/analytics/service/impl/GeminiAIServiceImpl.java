@@ -27,8 +27,11 @@ public class GeminiAIServiceImpl implements GeminiAIService {
     @Value("${gemini.api.key:}")
     private String geminiApiKey;
 
-    private static final String GEMINI_API_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+    @Value("${gemini.generation.model:gemini-flash-latest}")
+    private String geminiModel;
+
+    private static final String GEMINI_API_BASE =
+            "https://generativelanguage.googleapis.com/v1beta/models/";
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -82,29 +85,70 @@ public class GeminiAIServiceImpl implements GeminiAIService {
         return parseResponse(jsonResponse, new TypeReference<List<DashboardStatsDTO.Recommendation>>() {});
     }
 
+    @Override
+    public DashboardStatsDTO.AIAnalysis generateFullAnalysis(String context) {
+        String prompt = String.format(
+                "Bạn là chuyên gia phân tích dữ liệu du lịch. Dựa trên dữ liệu:\n%s\n\n" +
+                "Hãy trả về một JSON object duy nhất với cấu trúc sau (không dùng Markdown block, chỉ JSON thuần):\n" +
+                "{\"summary\": \"Tóm tắt 4-5 câu về tình hình kinh doanh bằng tiếng Việt\",\n" +
+                "\"insights\": [{\"title\":\"...\",\"description\":\"...\",\"type\":\"POSITIVE|NEUTRAL|NEGATIVE\",\"priority\":1-5}],\n" +
+                "\"predictions\": [{\"metric\":\"...\",\"prediction\":\"...\",\"confidence\":0-100,\"timeframe\":\"...\"}],\n" +
+                "\"recommendations\": [{\"title\":\"...\",\"description\":\"...\",\"action\":\"...\",\"impact\":1-5}]}\n" +
+                "insights: 3-5 items, predictions: 2-3 items, recommendations: 3-5 items. Tất cả bằng tiếng Việt.",
+                context
+        );
+        String jsonResponse = callGeminiAPI(prompt);
+        try {
+            String cleaned = cleanJsonString(jsonResponse);
+            if (cleaned.startsWith("[")) cleaned = "{\"summary\":\"\",\"insights\":" + cleaned + ",\"predictions\":[],\"recommendations\":[]}";
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(cleaned);
+            String summary = node.path("summary").asText("");
+            List<DashboardStatsDTO.Insight> insights = objectMapper.convertValue(node.path("insights"), new TypeReference<List<DashboardStatsDTO.Insight>>() {});
+            List<DashboardStatsDTO.Prediction> predictions = objectMapper.convertValue(node.path("predictions"), new TypeReference<List<DashboardStatsDTO.Prediction>>() {});
+            List<DashboardStatsDTO.Recommendation> recs = objectMapper.convertValue(node.path("recommendations"), new TypeReference<List<DashboardStatsDTO.Recommendation>>() {});
+            return DashboardStatsDTO.AIAnalysis.builder().summary(summary).insights(insights).predictions(predictions).recommendations(recs).build();
+        } catch (Exception e) {
+            log.error("Failed to parse full analysis JSON: {}", e.getMessage());
+            return DashboardStatsDTO.AIAnalysis.builder().summary(jsonResponse).insights(List.of()).predictions(List.of()).recommendations(List.of()).build();
+        }
+    }
+
     private String callGeminiAPI(String prompt) {
         if (geminiApiKey == null || geminiApiKey.isBlank()) {
             log.warn("Gemini API Key is missing — returning empty response");
             return "[]";
         }
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
+        // Try primary model, then fallback model, with simple retry on 503
+        String[] models = { geminiModel, "gemini-flash-lite-latest" };
+        for (String model : models) {
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.setContentType(MediaType.APPLICATION_JSON);
 
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("contents", List.of(
-                    Map.of("parts", List.of(Map.of("text", prompt)))
-            ));
+                    Map<String, Object> requestBody = new HashMap<>();
+                    requestBody.put("contents", List.of(
+                            Map.of("parts", List.of(Map.of("text", prompt)))
+                    ));
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
-            String url = GEMINI_API_URL + "?key=" + geminiApiKey;
+                    HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
+                    String url = GEMINI_API_BASE + model + ":generateContent?key=" + geminiApiKey;
 
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                return extractTextFromResponse(response.getBody());
+                    ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+                    if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                        log.info("Gemini call succeeded with model={} attempt={}", model, attempt);
+                        return extractTextFromResponse(response.getBody());
+                    }
+                } catch (org.springframework.web.client.HttpServerErrorException e) {
+                    log.warn("Gemini model={} attempt={} server error: {} — retrying…", model, attempt, e.getStatusCode());
+                    if (attempt < 2) {
+                        try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    }
+                } catch (Exception e) {
+                    log.error("Error calling Gemini API model={}: {}", model, e.getMessage());
+                    break; // non-server errors: skip retries, try next model
+                }
             }
-        } catch (Exception e) {
-            log.error("Error calling Gemini API: {}", e.getMessage());
         }
         return "[]";
     }
@@ -117,7 +161,12 @@ public class GeminiAIServiceImpl implements GeminiAIService {
                 Map<String, Object> content = (Map<String, Object>) candidates.get(0).get("content");
                 List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
                 if (parts != null && !parts.isEmpty()) {
-                    return (String) parts.get(0).get("text");
+                    StringBuilder sb = new StringBuilder();
+                    for (Map<String, Object> part : parts) {
+                        Object t = part.get("text");
+                        if (t != null) sb.append(t.toString());
+                    }
+                    return sb.toString();
                 }
             }
         } catch (Exception e) {

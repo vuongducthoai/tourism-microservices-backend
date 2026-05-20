@@ -147,43 +147,43 @@ SELECT setval('bookings_bookingid_seq', (SELECT MAX(bookingid) FROM bookings));
 -- Fields: passengerid, full_name, gender, date_of_birth (NOT NULL),
 --         passenger_type, base_price, requires_single_room, single_room_surcharge,
 --         booking_id
--- Schema: passengerid, full_name, phone, passenger_type, price, booking_id
+-- Schema: passengerid, full_name, gender, passenger_type, base_price, date_of_birth, booking_id
 -- ============================================================
 INSERT INTO booking_passengers (
-    passengerid, full_name, phone,
-    passenger_type, price,
+    passengerid, full_name, gender,
+    passenger_type, base_price, date_of_birth,
     booking_id, created_at, updated_at, is_deleted
 ) VALUES
 -- Booking 1 (dep 1, tour HN-HL, 2 adults)
-(1, 'Lê Văn Khách',   '0903000003', 'ADULT', 2800000, 1, NOW(), NOW(), false),
-(2, 'Lê Thị Hà',      '0904000004', 'ADULT', 2800000, 1, NOW(), NOW(), false),
+(1, 'Lê Văn Khách',    'MALE',   'ADULT', 2800000, '1985-03-15', 1, NOW(), NOW(), false),
+(2, 'Lê Thị Hà',       'FEMALE', 'ADULT', 2800000, '1988-07-20', 1, NOW(), NOW(), false),
 
 -- Booking 2 (dep 3, tour HN-SA, 1 adult)
-(3, 'Phạm Thị Mai',   '0904000004', 'ADULT', 4500000, 2, NOW(), NOW(), false),
+(3, 'Phạm Thị Mai',    'FEMALE', 'ADULT', 4500000, '1990-05-10', 2, NOW(), NOW(), false),
 
 -- Booking 3 (dep 5, tour HCM-PQ, 2 adults + 1 infant)
-(4, 'Hoàng Minh Tuấn',  '0905000005', 'ADULT',  8500000, 3, NOW(), NOW(), false),
-(5, 'Hoàng Thị Bích',  '0905000005', 'ADULT',  8500000, 3, NOW(), NOW(), false),
-(6, 'Hoàng Bé Bi',     '0905000005', 'INFANT', 1000000, 3, NOW(), NOW(), false),
+(4, 'Hoàng Minh Tuấn', 'MALE',   'ADULT',  8500000, '1982-11-25', 3, NOW(), NOW(), false),
+(5, 'Hoàng Thị Bích',  'FEMALE', 'ADULT',  8500000, '1985-04-12', 3, NOW(), NOW(), false),
+(6, 'Hoàng Bé Bi',     'MALE',   'INFANT', 1000000, '2023-06-01', 3, NOW(), NOW(), false),
 
 -- Booking 4 (dep 7, tour HCM-VT, 2 adults)
-(7, 'Nguyễn Thị Hương', '0906000006', 'ADULT', 1500000, 4, NOW(), NOW(), false),
-(8, 'Trần Văn Minh',   '0907000007', 'ADULT', 1500000, 4, NOW(), NOW(), false),
+(7, 'Nguyễn Thị Hương','FEMALE', 'ADULT', 1500000, '1992-09-18', 4, NOW(), NOW(), false),
+(8, 'Trần Văn Minh',   'MALE',   'ADULT', 1500000, '1989-12-30', 4, NOW(), NOW(), false),
 
 -- Booking 5 (dep 9, tour DN-HAN, 1 adult)
-(9, 'Đặng Quốc Bảo',   '0907000007', 'ADULT', 6500000, 5, NOW(), NOW(), false),
+(9, 'Đặng Quốc Bảo',   'MALE',   'ADULT', 6500000, '1987-02-14', 5, NOW(), NOW(), false),
 
--- Booking 6 (dep 11, tour HN-NT, 2 adults - cancelled)
-(10,'Lê Văn Khách',   '0903000003', 'ADULT', 7500000, 6, NOW(), NOW(), false),
-(11,'Lê Thị Hà',      '0904000004', 'ADULT', 7500000, 6, NOW(), NOW(), false),
+-- Booking 6 (dep 11, tour HN-NT, 2 adults)
+(10,'Lê Văn Khách',    'MALE',   'ADULT', 7500000, '1985-03-15', 6, NOW(), NOW(), false),
+(11,'Lê Thị Hà',       'FEMALE', 'ADULT', 7500000, '1988-07-20', 6, NOW(), NOW(), false),
 
 -- Booking 7 (dep 13, tour HCM-CT, 2 adults)
-(12,'Vũ Thị Lan',     '0908000008', 'ADULT', 2200000, 7, NOW(), NOW(), false),
-(13,'Vũ Văn Hùng',    '0908000008', 'ADULT', 2200000, 7, NOW(), NOW(), false),
+(12,'Vũ Thị Lan',      'FEMALE', 'ADULT', 2200000, '1993-08-22', 7, NOW(), NOW(), false),
+(13,'Vũ Văn Hùng',     'MALE',   'ADULT', 2200000, '1991-01-07', 7, NOW(), NOW(), false),
 
 -- Booking 8 (dep 6, tour HCM-PQ, 2 adults - pending refund)
-(14,'Nguyễn Thị Hương', '0906000006', 'ADULT', 9000000, 8, NOW(), NOW(), false),
-(15,'Nguyễn Văn Đức',  '0906000006', 'ADULT', 9000000, 8, NOW(), NOW(), false);
+(14,'Nguyễn Thị Hương','FEMALE', 'ADULT', 9000000, '1992-09-18', 8, NOW(), NOW(), false),
+(15,'Nguyễn Văn Đức',  'MALE',   'ADULT', 9000000, '1986-05-03', 8, NOW(), NOW(), false);
 
 SELECT setval('booking_passengers_passengerid_seq', (SELECT MAX(passengerid) FROM booking_passengers));
 
