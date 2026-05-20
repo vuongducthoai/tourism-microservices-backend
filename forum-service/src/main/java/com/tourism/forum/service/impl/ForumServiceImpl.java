@@ -3,6 +3,7 @@ package com.tourism.forum.service.impl;
 import com.tourism.forum.dto.request.CommentRequest;
 import com.tourism.forum.dto.request.CreatePostRequest;
 import com.tourism.forum.dto.request.PostFilterRequest;
+import com.tourism.forum.dto.request.PostUpdateRequest;
 import com.tourism.forum.dto.response.CategoryResponse;
 import com.tourism.forum.dto.response.CommentResponse;
 import com.tourism.forum.dto.response.PostDetailResponse;
@@ -20,6 +21,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -38,6 +40,9 @@ public class ForumServiceImpl implements ForumService {
     private final PostTagRepository postTagRepository;
     private final PostCommentRepository commentRepository;
     private final PostLikeRepository postLikeRepository;
+    private final CommentLikeRepository commentLikeRepository;
+    private final PostBookmarkRepository postBookmarkRepository;
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
     private final IamFeignClient iamFeignClient;
 
     // Simple in-memory cache cho user info (tránh Feign call lặp lại)
@@ -58,6 +63,10 @@ public class ForumServiceImpl implements ForumService {
     }
 
     private PostListResponse mapToListResponse(ForumPost post) {
+        return mapToListResponse(post, null);
+    }
+
+    private PostListResponse mapToListResponse(ForumPost post, Integer currentUserId) {
         UserBriefResponse author = getUserSafe(post.getUserId());
         List<PostListResponse.TagInfo> tags = post.getPostTags() == null ? List.of() :
             post.getPostTags().stream()
@@ -67,6 +76,11 @@ public class ForumServiceImpl implements ForumService {
                     .tagName(pt.getTag().getName())
                     .build())
                 .collect(Collectors.toList());
+
+        boolean isLiked = currentUserId != null &&
+            postLikeRepository.existsByPostPostIDAndUserId(post.getPostID(), currentUserId);
+        boolean isBookmarked = currentUserId != null &&
+            postBookmarkRepository.existsByPostIdAndUserId(post.getPostID(), currentUserId);
 
         return PostListResponse.builder()
             .postID(post.getPostID())
@@ -88,18 +102,35 @@ public class ForumServiceImpl implements ForumService {
             .isPinned(post.getIsPinned())
             .isFeatured(post.getIsFeatured())
             .status(post.getStatus() != null ? post.getStatus().name() : null)
+            .isLikedByCurrentUser(isLiked)
+            .isBookmarkedByCurrentUser(isBookmarked)
             .createdAt(post.getCreatedAt())
             .publishedAt(post.getPublishedAt())
             .build();
     }
 
-    private CommentResponse mapToCommentResponse(PostComment comment) {
+    /** Điểm tương tác của một bình luận = số like + số phản hồi (chưa bị xóa). */
+    private int engagementScore(PostComment c) {
+        int likes = c.getLikeCount() == null ? 0 : c.getLikeCount();
+        int replies = c.getReplies() == null ? 0 : (int) c.getReplies().stream()
+            .filter(r -> r.getIsDeleted() == null || !r.getIsDeleted())
+            .count();
+        return likes + replies;
+    }
+
+    private CommentResponse mapToCommentResponse(PostComment comment, Integer currentUserId) {
         UserBriefResponse author = getUserSafe(comment.getUserId());
+        // Replies: Facebook hiển thị theo thứ tự thời gian cũ → mới
         List<CommentResponse> replies = comment.getReplies() == null ? List.of() :
             comment.getReplies().stream()
                 .filter(r -> r.getIsDeleted() == null || !r.getIsDeleted())
-                .map(this::mapToCommentResponse)
+                .sorted(Comparator.comparing(
+                    r -> r.getCreatedAt() == null ? java.time.LocalDateTime.MIN : r.getCreatedAt()))
+                .map(r -> mapToCommentResponse(r, currentUserId))
                 .collect(Collectors.toList());
+
+        boolean isLiked = currentUserId != null &&
+            commentLikeRepository.existsByCommentCommentIDAndUserId(comment.getCommentID(), currentUserId);
 
         return CommentResponse.builder()
             .commentId(comment.getCommentID())
@@ -108,6 +139,7 @@ public class ForumServiceImpl implements ForumService {
             .userId(comment.getUserId())
             .authorName(author != null ? author.getFullName() : "Ẩn danh")
             .authorAvatar(author != null ? author.getAvatar() : null)
+            .isLikedByCurrentUser(isLiked)
             .createdAt(comment.getCreatedAt())
             .replies(replies)
             .build();
@@ -124,8 +156,15 @@ public class ForumServiceImpl implements ForumService {
                     .build())
                 .collect(Collectors.toList());
 
+        // "Phù hợp nhất" kiểu Facebook: ưu tiên bình luận có nhiều tương tác
+        // (số like + số phản hồi) lên đầu; cùng điểm thì bình luận MỚI hơn
+        // hiển thị trước.
         List<CommentResponse> comments = commentRepository.findTopLevelByPost(post).stream()
-            .map(this::mapToCommentResponse)
+            .sorted(Comparator
+                .comparingInt(this::engagementScore).reversed()
+                .thenComparing(c -> c.getCreatedAt() == null ? java.time.LocalDateTime.MIN : c.getCreatedAt(),
+                    Comparator.reverseOrder()))
+            .map(c -> mapToCommentResponse(c, currentUserId))
             .collect(Collectors.toList());
 
         boolean isLiked = currentUserId != null &&
@@ -166,6 +205,12 @@ public class ForumServiceImpl implements ForumService {
     @Override
     @Transactional(readOnly = true)
     public Page<PostListResponse> getPosts(PostFilterRequest filter, Pageable pageable) {
+        return getPosts(filter, pageable, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostListResponse> getPosts(PostFilterRequest filter, Pageable pageable, Integer currentUserId) {
         Specification<ForumPost> spec = Specification.where(
             (root, q, cb) -> cb.and(
                 cb.equal(root.get("status"), ContentStatus.PUBLISHED),
@@ -199,21 +244,35 @@ public class ForumServiceImpl implements ForumService {
             ));
         }
 
-        return forumPostRepository.findAll(spec, pageable).map(this::mapToListResponse);
+        return forumPostRepository.findAll(spec, pageable)
+            .map(p -> mapToListResponse(p, currentUserId));
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<PostListResponse> getTrendingPosts(Pageable pageable) {
+        return getTrendingPosts(pageable, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostListResponse> getTrendingPosts(Pageable pageable, Integer currentUserId) {
         LocalDateTime since = LocalDateTime.now().minusDays(7);
-        return forumPostRepository.findTrendingPosts(since, pageable).map(this::mapToListResponse);
+        return forumPostRepository.findTrendingPosts(since, pageable)
+            .map(p -> mapToListResponse(p, currentUserId));
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<PostListResponse> getPostsByUser(Integer userId, Pageable pageable) {
+        return getPostsByUser(userId, pageable, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostListResponse> getPostsByUser(Integer userId, Pageable pageable, Integer currentUserId) {
         return forumPostRepository.findByUserIdAndStatus(userId, ContentStatus.PUBLISHED, pageable)
-            .map(this::mapToListResponse);
+            .map(p -> mapToListResponse(p, currentUserId));
     }
 
     @Override
@@ -281,11 +340,25 @@ public class ForumServiceImpl implements ForumService {
         ForumPost post = forumPostRepository.findById(postId)
             .orElseThrow(() -> new RuntimeException("Post not found: " + postId));
 
-        // Increment view count
-        post.setViewCount(post.getViewCount() + 1);
-        forumPostRepository.save(post);
-
+        // View count is no longer incremented here — refetching the post
+        // (like/comment/refresh) must NOT inflate views. A dedicated
+        // recordView() endpoint handles this with per-viewer dedupe.
         return mapToDetailResponse(post, currentUserId);
+    }
+
+    @Override
+    public void recordView(Integer postId, String viewerKey) {
+        // Dedupe: count at most one view per viewer per 30-minute window.
+        String redisKey = "forum:view:" + postId + ":" + viewerKey;
+        Boolean firstView = redisTemplate.opsForValue()
+            .setIfAbsent(redisKey, "1", java.time.Duration.ofMinutes(30));
+
+        if (Boolean.TRUE.equals(firstView)) {
+            ForumPost post = forumPostRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found: " + postId));
+            post.setViewCount((post.getViewCount() == null ? 0 : post.getViewCount()) + 1);
+            forumPostRepository.save(post);
+        }
     }
 
     @Override
@@ -342,8 +415,20 @@ public class ForumServiceImpl implements ForumService {
     public void toggleCommentLike(Integer commentId, Integer userId) {
         PostComment comment = commentRepository.findById(commentId)
             .orElseThrow(() -> new RuntimeException("Comment not found: " + commentId));
-        // Simple toggle on likeCount (no CommentLike entity tracking for now)
-        comment.setLikeCount(comment.getLikeCount() + 1);
+
+        Optional<CommentLike> existing =
+            commentLikeRepository.findByCommentCommentIDAndUserId(commentId, userId);
+
+        if (existing.isPresent()) {
+            commentLikeRepository.delete(existing.get());
+            comment.setLikeCount(Math.max(0, (comment.getLikeCount() == null ? 0 : comment.getLikeCount()) - 1));
+        } else {
+            CommentLike like = new CommentLike();
+            like.setUserId(userId);
+            like.setComment(comment);
+            commentLikeRepository.save(like);
+            comment.setLikeCount((comment.getLikeCount() == null ? 0 : comment.getLikeCount()) + 1);
+        }
         commentRepository.save(comment);
     }
 
@@ -384,10 +469,11 @@ public class ForumServiceImpl implements ForumService {
     @Override
     @Transactional(readOnly = true)
     public List<PostListResponse.TagInfo> getPopularTags(int limit) {
-        return tagRepository.findPopularTags(PageRequest.of(0, limit)).stream()
-            .map(t -> PostListResponse.TagInfo.builder()
-                .tagId(t.getTagID())
-                .tagName(t.getName())
+        return tagRepository.findPopularTagsWithCount(PageRequest.of(0, limit)).stream()
+            .map(row -> PostListResponse.TagInfo.builder()
+                .tagId(((Number) row[0]).intValue())
+                .tagName((String) row[1])
+                .usageCount(((Number) row[2]).intValue())
                 .build())
             .collect(Collectors.toList());
     }
@@ -407,5 +493,104 @@ public class ForumServiceImpl implements ForumService {
         stats.put("likeCount", likeCount);
         stats.put("commentCount", commentCount);
         return stats;
+    }
+
+    // ── Bookmark ──────────────────────────────────────────────────────────────────
+
+    @Override
+    public boolean toggleBookmark(Integer postId, Integer userId) {
+        if (userId == null) {
+            return false;
+        }
+
+        Optional<PostBookmark> existing = postBookmarkRepository.findByPostIdAndUserId(postId, userId);
+
+        if (existing.isPresent()) {
+            postBookmarkRepository.delete(existing.get());
+            return false;
+        } else {
+            ForumPost post = forumPostRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found"));
+
+            PostBookmark bookmark = new PostBookmark();
+            bookmark.setUserId(userId);
+            bookmark.setPost(post);
+            postBookmarkRepository.save(bookmark);
+
+            post.setBookmarkCount((post.getBookmarkCount() != null ? post.getBookmarkCount() : 0) + 1);
+            forumPostRepository.save(post);
+
+            return true;
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean checkBookmarkStatus(Integer postId, Integer userId) {
+        if (userId == null) {
+            return false;
+        }
+        return postBookmarkRepository.existsByPostIdAndUserId(postId, userId);
+    }
+
+    // ── Update Post ───────────────────────────────────────────────────────────
+
+    @Override
+    public PostDetailResponse updatePost(Integer postId, PostUpdateRequest request, Integer userId) {
+        if (userId == null) {
+            throw new RuntimeException("Unauthorized: User not authenticated");
+        }
+
+        ForumPost post = forumPostRepository.findByIdAndNotDeleted(postId)
+            .orElseThrow(() -> new RuntimeException("Post not found"));
+
+        if (!post.getUserId().equals(userId)) {
+            throw new RuntimeException("Bạn không có quyền sửa bài viết này");
+        }
+
+        post.setTitle(request.getTitle());
+        post.setContent(request.getContent());
+        post.setSummary(request.getSummary());
+        post.setThumbnailUrl(request.getThumbnailUrl());
+        post.setUpdatedAt(LocalDateTime.now());
+
+        if (request.getCategoryId() != null) {
+            PostCategory category = categoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new RuntimeException("Category not found"));
+            post.setCategory(category);
+        }
+
+        if (request.getTagIds() != null && !request.getTagIds().isEmpty()) {
+            postTagRepository.deleteByPostPostID(postId);
+            request.getTagIds().forEach(tagId -> {
+                Tag tag = tagRepository.findById(tagId)
+                    .orElseThrow(() -> new RuntimeException("Tag not found"));
+                PostTag postTag = new PostTag();
+                postTag.setPost(post);
+                postTag.setTag(tag);
+                postTagRepository.save(postTag);
+            });
+        }
+
+        ForumPost updated = forumPostRepository.save(post);
+        return mapToDetailResponse(updated, userId);
+    }
+
+    @Override
+    public void deletePost(Integer postId, Integer userId) {
+        if (userId == null) {
+            throw new RuntimeException("Unauthorized: User not authenticated");
+        }
+
+        ForumPost post = forumPostRepository.findById(postId)
+            .orElseThrow(() -> new RuntimeException("Post not found"));
+
+        if (!post.getUserId().equals(userId)) {
+            throw new RuntimeException("Bạn không có quyền xóa bài viết này");
+        }
+
+        post.setIsDeleted(true);
+        post.setDeletedAt(LocalDateTime.now());
+        forumPostRepository.save(post);
     }
 }

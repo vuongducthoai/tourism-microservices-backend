@@ -179,8 +179,14 @@ public class AdminTourServiceImpl implements AdminTourService {
 
         TourMedia media = new TourMedia();
         media.setMediaUrl(url);
-        media.setMediaType(mediaType != null ? mediaType : "video");
         media.setTour(tour);
+
+        boolean isVideo = "video".equalsIgnoreCase(mediaType);
+        if (isVideo) {
+            boolean hasPrimaryVideo = tour.getMediaList() != null && tour.getMediaList().stream()
+            .anyMatch(m -> Boolean.TRUE.equals(m.getIsPrimary()));
+            media.setIsPrimary(!hasPrimaryVideo);
+        }
 
         if (tour.getMediaList() == null) tour.setMediaList(new ArrayList<>());
         tour.getMediaList().add(media);
@@ -188,7 +194,6 @@ public class AdminTourServiceImpl implements AdminTourService {
 
         return AdminMediaResponse.builder()
                 .mediaUrl(url)
-                .mediaType(media.getMediaType())
                 .build();
     }
 
@@ -285,9 +290,8 @@ public class AdminTourServiceImpl implements AdminTourService {
         List<AdminMediaResponse> mediaList = tour.getMediaList() == null ? new ArrayList<>() :
                 tour.getMediaList().stream()
                         .map(m -> AdminMediaResponse.builder()
-                                .tourMediaID(m.getTourMediaID())
+                                .tourMediaID(m.getMediaId())
                                 .mediaUrl(m.getMediaUrl())
-                                .mediaType(m.getMediaType())
                                 .build())
                         .collect(Collectors.toList());
 

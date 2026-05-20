@@ -20,6 +20,7 @@ public class CommentResponse {
     private Integer userId;
     private String authorName;
     private String authorAvatar;
+    private Boolean isLikedByCurrentUser;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;

@@ -39,6 +39,9 @@ public class PostListResponse {
     private Boolean isFeatured;
     private String status;
 
+    private Boolean isLikedByCurrentUser;
+    private Boolean isBookmarkedByCurrentUser;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
 
@@ -52,5 +55,6 @@ public class PostListResponse {
     public static class TagInfo {
         private Integer tagId;
         private String tagName;
+        private Integer usageCount;
     }
 }

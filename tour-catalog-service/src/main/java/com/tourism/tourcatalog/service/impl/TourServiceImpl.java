@@ -19,6 +19,7 @@ import com.tourism.tourcatalog.entity.DepartureTransport;
 import com.tourism.tourcatalog.entity.PolicyTemplate;
 import com.tourism.tourcatalog.entity.Tour;
 import com.tourism.tourcatalog.entity.TourDeparture;
+import com.tourism.tourcatalog.entity.TourMedia;
 import com.tourism.tourcatalog.entity.TransportType;
 import com.tourism.tourcatalog.feign.BookingFeignClient;
 import com.tourism.tourcatalog.feign.dto.CouponBriefResponse;
@@ -360,9 +361,11 @@ public class TourServiceImpl implements TourService {
         String videoUrl = null;
         if (tour.getMediaList() != null) {
             videoUrl = tour.getMediaList().stream()
-                    .filter(m -> m.getMediaType() != null && m.getMediaType().toUpperCase().contains("VIDEO"))
+                    .filter(m -> m.getMediaUrl() != null && isVideoUrl(m.getMediaUrl()))
+                    .sorted(Comparator.comparing(
+                        (TourMedia m) -> Boolean.TRUE.equals(m.getIsPrimary()) ? 0 : 1))
                     .findFirst()
-                    .map(m -> m.getMediaUrl())
+                    .map(TourMedia::getMediaUrl)
                     .orElse(null);
         }
 
@@ -518,5 +521,14 @@ public class TourServiceImpl implements TourService {
                 .map(l -> l.getAirportName() != null ? l.getAirportName() : l.getName())
                 .orElse(airportCode);
     }
-}
 
+    private static boolean isVideoUrl(String url){
+        if (url == null) return false;
+        String lower = url.toLowerCase();
+        return lower.contains("/video/upload/")   // Cloudinary video URL pattern
+                || lower.endsWith(".mp4")
+                || lower.endsWith(".webm")
+                || lower.endsWith(".mov")
+                || lower.endsWith(".mkv");
+    }
+}
