@@ -132,6 +132,17 @@ public class DepartureController {
         return ResponseEntity.ok().build();
     }
 
+    @Operation(summary = "[Internal] Tăng số chỗ trống", description = "Trả lại slot khi booking bị hủy. booking-service gọi qua Feign khi hủy booking")
+    @ApiResponse(responseCode = "200", description = "Tăng thành công")
+    @PostMapping("/{departureId}/increase-slots")
+    @Transactional
+    public ResponseEntity<Void> increaseSlots(
+            @PathVariable Integer departureId,
+            @RequestParam int count) {
+        tourDepartureRepository.increaseAvailableSlots(departureId, count);
+        return ResponseEntity.ok().build();
+    }
+
     private TourBookingInfoResponse.FlightInfo toFlightInfo(DepartureTransport t) {
         TourBookingInfoResponse.FlightInfo f = new TourBookingInfoResponse.FlightInfo();
         f.setVehicleType(t.getVehicleType() != null ? t.getVehicleType().name() : null);

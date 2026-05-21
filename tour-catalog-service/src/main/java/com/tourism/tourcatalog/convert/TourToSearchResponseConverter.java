@@ -3,8 +3,10 @@ package com.tourism.tourcatalog.convert;
 import com.tourism.tourcatalog.dto.response.DepartureDateItem;
 import com.tourism.tourcatalog.dto.response.TourSearchResponse;
 import com.tourism.tourcatalog.entity.DeparturePricing;
+import com.tourism.tourcatalog.entity.DepartureTransport;
 import com.tourism.tourcatalog.entity.Tour;
 import com.tourism.tourcatalog.entity.TourDeparture;
+import com.tourism.tourcatalog.entity.TransportType;
 import org.modelmapper.Converter;
 import org.modelmapper.spi.MappingContext;
 import org.springframework.stereotype.Component;
@@ -19,11 +21,14 @@ import java.util.List;
 /**
  * Tour -> TourSearchResponse (dùng cho GET /api/tours/search).
  *
- * Logic giống TourToDisplayResponseConverter nhưng trả thêm:
- *  - startPointName : tour.startLocation.name (điểm khởi hành)
- *  - departureDates : List<{departureID, departureDate}> — chỉ các departure
- *                     có status=true VÀ departureDate >= hôm nay, sort tăng dần
- *  - isFavorite     : false (auth service không có ở catalog service)
+ * Logic lọc departure hợp lệ (BẮT BUỘC cả 4 điều kiện):
+ *  1. status = true
+ *  2. Có ít nhất 1 DeparturePricing (có dữ liệu giá)
+ *  3. BẮT BUỘC có DepartureTransport loại OUTBOUND với departTime != null
+ *     → Không có OUTBOUND transport thì KHÔNG hiển thị (bỏ qua)
+ *  4. OUTBOUND departTime phải trong tương lai (>= now)
+ *     → Đã qua rồi thì KHÔNG hiển thị
+ *  Ngày hiển thị: OUTBOUND departTime.toLocalDate()
  */
 @Component
 public class TourToSearchResponseConverter implements Converter<Tour, TourSearchResponse> {
@@ -54,29 +59,47 @@ public class TourToSearchResponseConverter implements Converter<Tour, TourSearch
         List<DepartureDateItem> departureDates = new ArrayList<>();
         BigDecimal minAdultPrice = null;
 
-        LocalDate today = LocalDate.now();
+        LocalDateTime now = LocalDateTime.now();
 
         if (tour.getDepartures() != null) {
             for (TourDeparture dep : tour.getDepartures()) {
+                // 1. Status phải active
                 if (!Boolean.TRUE.equals(dep.getStatus())) continue;
-                if (dep.getDepartureDate() == null) continue;
 
-                LocalDate depDate = dep.getDepartureDate().toLocalDate();
-                // Chỉ lấy các chuyến từ hôm nay trở về sau
-                if (depDate.isBefore(today)) continue;
+                // 2. Phải có ít nhất 1 pricing (có dữ liệu giá)
+                if (dep.getPricings() == null || dep.getPricings().isEmpty()) continue;
+
+                // 3. BẮT BUỘC: tìm OUTBOUND transport với departTime hợp lệ
+                LocalDateTime outboundDepartTime = null;
+                if (dep.getTransports() != null) {
+                    for (DepartureTransport t : dep.getTransports()) {
+                        if (TransportType.OUTBOUND.equals(t.getTransportType())
+                                && t.getDepartTime() != null) {
+                            outboundDepartTime = t.getDepartTime();
+                            break;
+                        }
+                    }
+                }
+
+                // Không có OUTBOUND transport → bỏ qua, không hiển thị
+                if (outboundDepartTime == null) continue;
+
+                // 4. OUTBOUND departTime phải trong tương lai
+                if (outboundDepartTime.isBefore(now)) continue;
+
+                // Ngày hiển thị: OUTBOUND departTime.toLocalDate()
+                LocalDate displayDate = outboundDepartTime.toLocalDate();
 
                 departureDates.add(DepartureDateItem.builder()
                         .departureID(dep.getDepartureID())
-                        .departureDate(depDate.toString())
+                        .departureDate(displayDate.toString())
                         .build());
 
                 // Tính giá ADULT thấp nhất
-                if (dep.getPricings() != null) {
-                    for (DeparturePricing p : dep.getPricings()) {
-                        if ("ADULT".equals(p.getPassengerType()) && p.getSalePrice() != null) {
-                            if (minAdultPrice == null || p.getSalePrice().compareTo(minAdultPrice) < 0) {
-                                minAdultPrice = p.getSalePrice();
-                            }
+                for (DeparturePricing p : dep.getPricings()) {
+                    if ("ADULT".equals(p.getPassengerType()) && p.getSalePrice() != null) {
+                        if (minAdultPrice == null || p.getSalePrice().compareTo(minAdultPrice) < 0) {
+                            minAdultPrice = p.getSalePrice();
                         }
                     }
                 }

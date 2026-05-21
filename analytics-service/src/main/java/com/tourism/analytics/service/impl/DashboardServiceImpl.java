@@ -66,17 +66,7 @@ public class DashboardServiceImpl implements DashboardService {
 
         String context = buildAIContext(ur, br, tr, from, to, mode);
 
-        String summary = geminiAIService.generateDashboardSummary(context);
-        List<DashboardStatsDTO.Insight> insights = geminiAIService.generateInsights(context);
-        List<DashboardStatsDTO.Prediction> predictions = geminiAIService.generatePredictions(context);
-        List<DashboardStatsDTO.Recommendation> recommendations = geminiAIService.generateRecommendations(context);
-
-        return DashboardStatsDTO.AIAnalysis.builder()
-                .summary(summary)
-                .insights(insights)
-                .predictions(predictions)
-                .recommendations(recommendations)
-                .build();
+        return geminiAIService.generateFullAnalysis(context);
     }
 
     // ════════════════════════════════════════════════════════════════

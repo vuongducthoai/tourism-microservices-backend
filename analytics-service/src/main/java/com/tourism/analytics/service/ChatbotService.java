@@ -172,23 +172,16 @@ public class ChatbotService {
             }
         }
 
-        StringBuilder context = new StringBuilder("Dữ liệu từ hệ thống");
+        StringBuilder context = new StringBuilder();
 
-        // Emit QUAN TRỌNG header tùy theo loại query
-        if (isCouponQuery && displayDocs != docs) {
-            context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(displayDocs.size())
-                    .append(" tour đang có mã giảm giá coupon (sắp xếp theo mức coupon từ cao đến thấp)");
-        } else if (isDiscountQuery && displayDocs != docs) {
-            context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(displayDocs.size())
-                    .append(" tour đang được giảm giá (sắp xếp theo mức giảm sâu từ cao đến thấp, tính theo giá gốc trừ giá bán)");
-        }
-
-        context.append(":\n\n");
+        // Build tour entries first, then prepend header with accurate count
+        StringBuilder tourEntries = new StringBuilder();
+        int addedCount = 0;
 
         for (int i = 0; i < displayDocs.size(); i++) {
-            if (context.length() > 3500) break;
+            if (tourEntries.length() > 4000) break;
             VectorDocumentDTO doc = displayDocs.get(i);
-            context.append(i + 1).append(". ").append(doc.getContent()).append("\n");
+            tourEntries.append(i + 1).append(". ").append(doc.getContent()).append("\n");
 
             try {
                 Map<String, Object> meta = gson.fromJson(doc.getMetadata(), Map.class);
@@ -201,7 +194,7 @@ public class ChatbotService {
                     String tourCode  = getString(meta, "tourCode");
                     String deptDate  = getString(meta, "departureDate");
 
-                    context.append("   [Tên tour: ").append(tourName)
+                    tourEntries.append("   [Tên tour: ").append(tourName)
                             .append(", Mã tour: ").append(tourCode)
                             .append(", Ngày: ").append(deptDate)
                             .append(", Giá ADULT: ").append(String.format("%,.0f", salePrice)).append(" VND");
@@ -210,7 +203,7 @@ public class ChatbotService {
                     if (origPrice > 0 && salePrice > 0 && origPrice > salePrice) {
                         double priceDisc = origPrice - salePrice;
                         double pct = (priceDisc / origPrice) * 100;
-                        context.append(", Giá gốc: ").append(String.format("%,.0f", origPrice)).append(" VND")
+                        tourEntries.append(", Giá gốc: ").append(String.format("%,.0f", origPrice)).append(" VND")
                                 .append(", GIẢM GIÁ: ").append(String.format("%,.0f", priceDisc))
                                 .append(" VND (").append(String.format("%.0f", pct)).append("%)");
                         log.debug("📊 Tour {} giảm giá: {} VND ({}%)", tourName,
@@ -221,23 +214,25 @@ public class ChatbotService {
                     if (couponDisc > 0) {
                         String couponCode    = getString(meta, "couponCode");
                         String couponEndDate = getString(meta, "couponEndDate");
-                        context.append(", 🎁 MÃ COUPON: ").append(couponCode.isEmpty() ? "N/A" : couponCode)
+                        tourEntries.append(", 🎁 MÃ COUPON: ").append(couponCode.isEmpty() ? "N/A" : couponCode)
                                 .append(" giảm thêm ").append(String.format("%,.0f", couponDisc)).append(" VND");
                         if (!couponEndDate.isEmpty()) {
-                            context.append(" (HSD: ").append(couponEndDate).append(")");
+                            tourEntries.append(" (HSD: ").append(couponEndDate).append(")");
                         }
                     }
 
-                    context.append("]\n");
+                    tourEntries.append("]\n");
+                    addedCount++;
 
                 } else if ("LOCATION".equals(doc.getType())) {
                     Object locationId = meta.get("locationID");
                     String locationName = getString(meta, "name");
                     if (locationId != null) {
-                        context.append("   [Địa điểm: ").append(locationName)
+                        tourEntries.append("   [Địa điểm: ").append(locationName)
                                 .append(", LocationID: ").append(((Number) locationId).intValue())
                                 .append("]\n");
                     }
+                    addedCount++;
                 } else if ("COUPON".equals(doc.getType())) {
                     String couponCode    = getString(meta, "couponCode");
                     Object discountAmt   = meta.get("discountAmount");
@@ -245,23 +240,35 @@ public class ChatbotService {
                     String endDate       = getString(meta, "endDate");
                     Object remaining     = meta.get("usageLimit");
                     if (!couponCode.isEmpty()) {
-                        context.append("   [🎁 COUPON: ").append(couponCode);
+                        tourEntries.append("   [🎁 COUPON: ").append(couponCode);
                         if (discountAmt != null)
-                            context.append(", Giảm: ").append(String.format("%,.0f", ((Number) discountAmt).doubleValue())).append(" VND");
+                            tourEntries.append(", Giảm: ").append(String.format("%,.0f", ((Number) discountAmt).doubleValue())).append(" VND");
                         if ("GLOBAL".equals(couponType))
-                            context.append(", Áp dụng: tất cả tour");
+                            tourEntries.append(", Áp dụng: tất cả tour");
                         else
-                            context.append(", Áp dụng: lịch khởi hành cụ thể");
+                            tourEntries.append(", Áp dụng: lịch khởi hành cụ thể");
                         if (!endDate.isEmpty())
-                            context.append(", HSD: ").append(endDate.length() > 10 ? endDate.substring(0, 10) : endDate);
-                        context.append("]\n");
+                            tourEntries.append(", HSD: ").append(endDate.length() > 10 ? endDate.substring(0, 10) : endDate);
+                        tourEntries.append("]\n");
+                        addedCount++;
                     }
                 }
             } catch (Exception e) {
                 log.debug("Error parsing metadata for doc {}: {}", doc.getId(), e.getMessage());
             }
-            context.append("\n");
+            tourEntries.append("\n");
         }
+
+        // Build final context with accurate count in header
+        context.append("Dữ liệu từ hệ thống");
+        if (isCouponQuery && displayDocs != docs) {
+            context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(addedCount)
+                    .append(" tour đang có mã giảm giá coupon (sắp xếp theo mức coupon từ cao đến thấp)");
+        } else if (isDiscountQuery && displayDocs != docs) {
+            context.append(" - QUAN TRỌNG: Có CHÍNH XÁC ").append(addedCount)
+                    .append(" tour đang được giảm giá (sắp xếp theo mức giảm sâu từ cao đến thấp)");
+        }
+        context.append(":\n\n").append(tourEntries);
 
         return context.toString();
     }
@@ -388,40 +395,57 @@ public class ChatbotService {
      * Temperature thấp (0.2) để giảm hallucination.
      */
     String callGeminiAPI(String prompt) {
-        try {
-            String url = GEMINI_GENERATE_URL + generationModel + ":generateContent?key=" + geminiApiKey;
+        Map<String, Object> genConfig = new HashMap<>();
+        genConfig.put("temperature",     0.2);
+        genConfig.put("maxOutputTokens", 3000);
 
-            Map<String, Object> genConfig = new HashMap<>();
-            genConfig.put("temperature",     0.2);
-            genConfig.put("maxOutputTokens", 1000);
+        Map<String, Object> body = new HashMap<>();
+        body.put("contents", List.of(
+                Map.of("parts", List.of(Map.of("text", prompt)))
+        ));
+        body.put("generationConfig", genConfig);
 
-            Map<String, Object> body = new HashMap<>();
-            body.put("contents", List.of(
-                    Map.of("parts", List.of(Map.of("text", prompt)))
-            ));
-            body.put("generationConfig", genConfig);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, headers);
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
+        // Try primary model, then fallback, with 1 retry on 503
+        String[] models = { generationModel, "gemini-flash-lite-latest", "gemini-2.0-flash-lite" };
+        for (String model : models) {
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    String url = GEMINI_GENERATE_URL + model + ":generateContent?key=" + geminiApiKey;
+                    ResponseEntity<Map> response = restTemplate.postForEntity(url, req, Map.class);
 
-            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, req, Map.class);
-
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                List<Map<String, Object>> candidates =
-                        (List<Map<String, Object>>) response.getBody().get("candidates");
-                if (candidates != null && !candidates.isEmpty()) {
-                    Map<String, Object> content =
-                            (Map<String, Object>) candidates.get(0).get("content");
-                    List<Map<String, Object>> parts =
-                            (List<Map<String, Object>>) content.get("parts");
-                    if (parts != null && !parts.isEmpty()) {
-                        return (String) parts.get(0).get("text");
+                    if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                        List<Map<String, Object>> candidates =
+                                (List<Map<String, Object>>) response.getBody().get("candidates");
+                        if (candidates != null && !candidates.isEmpty()) {
+                            Map<String, Object> content =
+                                    (Map<String, Object>) candidates.get(0).get("content");
+                            List<Map<String, Object>> parts =
+                                    (List<Map<String, Object>>) content.get("parts");
+                            if (parts != null && !parts.isEmpty()) {
+                                log.info("✅ Chatbot Gemini OK model={} parts={} attempt={}", model, parts.size(), attempt);
+                                StringBuilder sb = new StringBuilder();
+                                for (Map<String, Object> part : parts) {
+                                    Object t = part.get("text");
+                                    if (t != null) sb.append(t.toString());
+                                }
+                                return sb.toString();
+                            }
+                        }
                     }
+                } catch (org.springframework.web.client.HttpServerErrorException e) {
+                    log.warn("⚠️ Gemini model={} attempt={} server error: {} — retrying…", model, attempt, e.getStatusCode());
+                    if (attempt < 2) {
+                        try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    }
+                } catch (Exception e) {
+                    log.error("❌ Error calling Gemini API model={}: {}", model, e.getMessage());
+                    break;
                 }
             }
-        } catch (Exception e) {
-            log.error("❌ Error calling Gemini API: {}", e.getMessage(), e);
         }
         return "Xin lỗi, tôi đang gặp sự cố kỹ thuật. Vui lòng thử lại sau.";
     }

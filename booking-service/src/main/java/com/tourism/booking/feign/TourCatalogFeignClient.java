@@ -24,4 +24,9 @@ public interface TourCatalogFeignClient {
     ResponseEntity<Void> decreaseSlots(
             @PathVariable Integer departureId,
             @RequestParam int count);
+
+    @PostMapping("/api/departures/{departureId}/increase-slots")
+    ResponseEntity<Void> increaseSlots(
+            @PathVariable Integer departureId,
+            @RequestParam int count);
 }
