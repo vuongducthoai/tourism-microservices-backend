@@ -19,8 +19,10 @@ public class RabbitMQConfig {
     public static final String EXCHANGE           = "tourism.events";
     public static final String QUEUE_NOTIFICATION = "booking.notification.queue";
     public static final String QUEUE_ANALYTICS    = "booking.analytics.queue";
+    public static final String QUEUE_FORUM_NOTIFICATION = "forum.notification.queue";
     public static final String DLQ_NOTIFICATION   = "booking.notification.dlq";
     public static final String DLQ_ANALYTICS      = "booking.analytics.dlq";
+    public static final String DLQ_FORUM_NOTIFICATION = "forum.notification.dlq";
 
     @Bean
     public TopicExchange tourismEventsExchange() {
@@ -51,6 +53,29 @@ public class RabbitMQConfig {
                 .withArgument("x-dead-letter-exchange", "")
                 .withArgument("x-dead-letter-routing-key", DLQ_ANALYTICS)
                 .build();
+    }
+
+    @Bean
+    public Queue forumNotificationDlq() {
+        return QueueBuilder.durable(DLQ_FORUM_NOTIFICATION).build();
+    }
+
+    
+    @Bean
+    public Queue forumNotificationQueue() {
+        return QueueBuilder.durable(QUEUE_FORUM_NOTIFICATION)
+                .withArgument("x-dead-letter-exchange", "")
+                .withArgument("x-dead-letter-routing-key", DLQ_FORUM_NOTIFICATION)
+                .build();
+    }
+
+    @Bean
+    public Binding forumNotificationBinding(Queue forumNotificationQueue,
+                                            TopicExchange tourismEventsExchange) {
+        // "forum.notification.*" khớp với mọi routing key bắt đầu bằng "forum.notification."
+        return BindingBuilder.bind(forumNotificationQueue)
+                .to(tourismEventsExchange)
+                .with("forum.notification.*");
     }
 
     @Bean

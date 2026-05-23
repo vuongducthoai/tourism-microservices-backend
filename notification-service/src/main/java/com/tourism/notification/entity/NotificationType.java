@@ -29,5 +29,10 @@ public enum NotificationType {
 
     // System
     SYSTEM_ANNOUNCEMENT,
-    WELCOME
+    WELCOME,
+
+    COMMENT_REPLIED,
+    COMMENT_LIKED,
+    NEW_POST_FROM_FOLLOWING,
+
 }
