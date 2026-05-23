@@ -1,5 +1,6 @@
 package com.tourism.forum.service.impl;
 
+import com.tourism.forum.dto.event.ForumNotificationEvent;
 import com.tourism.forum.dto.request.CommentRequest;
 import com.tourism.forum.dto.request.CreatePostRequest;
 import com.tourism.forum.dto.request.PostFilterRequest;
@@ -11,6 +12,7 @@ import com.tourism.forum.dto.response.PostListResponse;
 import com.tourism.forum.entity.*;
 import com.tourism.forum.feign.IamFeignClient;
 import com.tourism.forum.feign.dto.UserBriefResponse;
+import com.tourism.forum.messaging.ForumEventPublisher;
 import com.tourism.forum.repository.*;
 import com.tourism.forum.service.ForumService;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +23,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -44,6 +45,8 @@ public class ForumServiceImpl implements ForumService {
     private final PostBookmarkRepository postBookmarkRepository;
     private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
     private final IamFeignClient iamFeignClient;
+    private final ForumEventPublisher forumEventPublisher;
+    private final FollowerRepository followerRepository;
 
     // Simple in-memory cache cho user info (tránh Feign call lặp lại)
     private final Map<Integer, UserBriefResponse> userCache = new ConcurrentHashMap<>();
@@ -332,6 +335,32 @@ public class ForumServiceImpl implements ForumService {
             post = forumPostRepository.findById(post.getPostID()).orElse(post);
         }
 
+        // Thông báo cho tát cả follower về bài viết mới
+        // (chỉ thông báo khi PUBLISHED, không thông báo DRAFT)
+        if(!Boolean.TRUE.equals(request.getIsDraft())){
+            List<Integer> followerIds = followerRepository.findFollowerIdsByFollowingUserId(request.getUserId());
+
+            if(!followerIds.isEmpty()){
+                UserBriefResponse author = getUserSafe(request.getUserId());
+                String authorName = author != null ? author.getFullName() : "Ai đó";
+                String authorAvatar = author != null ? author.getAvatar() : null;   
+
+                ForumPost finalPost = post;
+                for(Integer followerId : followerIds){
+                    forumEventPublisher.publishForumEvent(ForumNotificationEvent.builder()
+                        .idempotencyKey("NEW_POST-" + finalPost.getPostID() +  "-follower-" + followerId)
+                        .eventType("NEW_POST_FROM_FOLLOWING")
+                        .recipientUserId(followerId)
+                        .actorUserId(request.getUserId())
+                        .actorName(authorName)
+                        .actorAvatar(authorAvatar)
+                        .postId(post.getPostID())
+                        .postTitle(post.getTitle())
+                        .build());
+                }
+            }
+        }
+
         return mapToDetailResponse(post, request.getUserId());
     }
 
@@ -376,6 +405,19 @@ public class ForumServiceImpl implements ForumService {
             like.setUserId(userId);
             postLikeRepository.save(like);
             post.setLikeCount(post.getLikeCount() + 1);
+
+            // -- Gửi notification (chỉ khi THÊM like, không gửi khi bỏ like) --
+            UserBriefResponse actor = getUserSafe(userId);
+             forumEventPublisher.publishForumEvent(ForumNotificationEvent.builder()
+                .idempotencyKey("POST_LIKED-" + postId + "-" + userId + "-" + System.currentTimeMillis())
+                .eventType("POST_LIKED")
+                .recipientUserId(post.getUserId())
+                .actorUserId(userId)
+                .actorName(actor != null ? actor.getFullName() : "Ai đó")
+                .actorAvatar(actor != null ? actor.getAvatar() : null)
+                .postId(postId)
+                .postTitle(post.getTitle())
+                .build());
         }
         forumPostRepository.save(post);
     }
@@ -398,16 +440,49 @@ public class ForumServiceImpl implements ForumService {
         comment.setPost(post);
         comment.setLikeCount(0);
 
+        PostComment parentComment = null;
         if (request.getParentCommentId() != null) {
-            PostComment parent = commentRepository.findById(request.getParentCommentId())
-                .orElse(null);
-            comment.setParentComment(parent);
+            parentComment = commentRepository.findById(request.getParentCommentId()).orElse(null);
+            comment.setParentComment(parentComment);
         }
 
-        commentRepository.save(comment);
+        PostComment savedComment = commentRepository.save(comment);
         post.setCommentCount(post.getCommentCount() + 1);
         forumPostRepository.save(post);
 
+        // Gửi notification ----------------------------------
+        UserBriefResponse actor = getUserSafe(request.getUserId());
+        String actorName = actor != null ? actor.getFullName() : "Ai đó";
+        String actorAvatar = actor != null ? actor.getAvatar() : null;
+
+        if(parentComment == null){
+            // Comment gốc -> thông báo tác giả bài viết 
+            forumEventPublisher.publishForumEvent(ForumNotificationEvent.builder()
+                .idempotencyKey("POST_COMMENTED-" + postId + "-" + savedComment.getCommentID())
+                .eventType("POST_COMMENTED")
+                .recipientUserId(post.getUserId())
+                .actorUserId(request.getUserId())
+                .actorName(actorName)
+                .actorAvatar(actorAvatar)
+                .postId(postId)
+                .postTitle(post.getTitle())
+                .commentId(savedComment.getCommentID())
+                .build());
+        } else {
+            //Reply -> thông báo tác giả comment cha 
+            forumEventPublisher.publishForumEvent(ForumNotificationEvent.builder()
+                .idempotencyKey("COMMENT_REPLIED-" + savedComment.getCommentID())
+                .eventType("COMMENT_REPLIED")
+                .recipientUserId(parentComment.getUserId())
+                .actorUserId(request.getUserId())
+                .actorName(actorName)
+                .actorAvatar(actorAvatar)
+                .postId(postId)
+                .postTitle(post.getTitle())
+                .commentId(savedComment.getCommentID())
+                .parentCommentId(parentComment.getCommentID())
+                .build());
+        }
         return mapToDetailResponse(post, request.getUserId());
     }
 
@@ -428,6 +503,20 @@ public class ForumServiceImpl implements ForumService {
             like.setComment(comment);
             commentLikeRepository.save(like);
             comment.setLikeCount((comment.getLikeCount() == null ? 0 : comment.getLikeCount()) + 1);
+            
+            // -- Gửi notification (chỉ khi THÊM like) --
+            UserBriefResponse actor = getUserSafe(userId);
+             forumEventPublisher.publishForumEvent(ForumNotificationEvent.builder()
+                .idempotencyKey("COMMENT_LIKED-" + commentId + "-" + userId + "-" + System.currentTimeMillis())
+                .eventType("COMMENT_LIKED")
+                .recipientUserId(comment.getUserId())
+                .actorUserId(userId)
+                .actorName(actor != null ? actor.getFullName() : "Ai đó")
+                .actorAvatar(actor != null ? actor.getAvatar() : null)
+                .postId(comment.getPost() != null ? comment.getPost().getPostID() : null)
+                .postTitle(comment.getPost() != null ? comment.getPost().getTitle() : null)
+                .commentId(commentId)
+                .build());
         }
         commentRepository.save(comment);
     }

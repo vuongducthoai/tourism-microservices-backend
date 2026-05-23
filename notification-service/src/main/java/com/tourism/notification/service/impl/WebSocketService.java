@@ -77,4 +77,14 @@ public class WebSocketService {
             log.error("WebSocket broadcast failed for /topic/promotions coupon={}: {}", event.getCouponCode(), e.getMessage());
         }
     }
+
+    public void notifyUserForum(Integer userId, Object payload){
+        if(userId == null) return;
+        try {
+            messagingTemplate.convertAndSend("/topic/user/" + userId + "/notifications", payload);
+            log.info("WebSocket forum notification pushed to userId={}", userId); 
+        } catch(Exception e){
+             log.error("WebSocket push failed for userId={}: {}", userId, e.getMessage());
+        }
+    }
 }

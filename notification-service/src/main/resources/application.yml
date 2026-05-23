@@ -50,9 +50,10 @@ spring:
       simple:
         retry:
           enabled: true
-          initial-interval: 3000
+          initial-interval: 1000
           max-attempts: 3
           multiplier: 2
+          max-interval: 10000
 
 eureka:
   client:

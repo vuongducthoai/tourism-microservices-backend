@@ -1,5 +1,6 @@
 package com.tourism.notification.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.notification.dto.BookingEventDTO;
 import com.tourism.notification.dto.CouponEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
@@ -13,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -22,6 +24,7 @@ public class NotificationServiceImpl implements NotificationService {
     private final MailService            mailService;
     private final WebSocketService       webSocketService;
     private final NotificationRepository notificationRepository;
+    private final ObjectMapper           objectMapper;
 
     @Override
     public void handleRefundRequested(BookingEventDTO event) {
@@ -42,7 +45,8 @@ public class NotificationServiceImpl implements NotificationService {
                     event.getUserId(),
                     NotificationType.BOOKING_REFUND_REQUESTED,
                     "Yeu cau hoan tien da gui",
-                    String.format("Booking %s cua ban dang cho hoan tien ngan hang.", event.getBookingCode())
+                    String.format("Booking %s cua ban dang cho hoan tien ngan hang.", event.getBookingCode()),
+                    event.getBookingCode()
             );
         }
 
@@ -82,20 +86,27 @@ public class NotificationServiceImpl implements NotificationService {
                     NotificationType.BOOKING_CANCELLED,
                     "Trang thai booking cap nhat",
                     String.format("Booking %s da chuyen sang trang thai %s.",
-                            event.getBookingCode(), status)
+                            event.getBookingCode(), status),
+                    event.getBookingCode()
             );
         }
     }
 
     private void saveNotification(Integer userId, NotificationType type, String title, String message) {
+        saveNotification(userId, type, title, message, null);
+    }
+
+    private void saveNotification(Integer userId, NotificationType type, String title, String message, String bookingCode) {
         try {
-            Notification n = Notification.builder()
+            Notification.NotificationBuilder builder = Notification.builder()
                     .userId(userId)
                     .type(type)
                     .title(title)
-                    .message(message)
-                    .build();
-            notificationRepository.save(n);
+                    .message(message);
+            if (bookingCode != null) {
+                builder.metadata(objectMapper.valueToTree(Map.of("bookingCode", bookingCode)));
+            }
+            notificationRepository.save(builder.build());
         } catch (Exception e) {
             log.error("Failed to save notification: {}", e.getMessage());
         }
@@ -124,7 +135,8 @@ public class NotificationServiceImpl implements NotificationService {
                     NotificationType.BOOKING_CONFIRMED,
                     "Dat tour thanh cong",
                     String.format("Booking %s cua ban da duoc xac nhan va thanh toan thanh cong.",
-                            event.getBookingCode())
+                            event.getBookingCode()),
+                    event.getBookingCode()
             );
         }
     }
