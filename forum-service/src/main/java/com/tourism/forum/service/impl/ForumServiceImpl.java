@@ -1,6 +1,7 @@
 package com.tourism.forum.service.impl;
 
 import com.tourism.forum.dto.event.ForumNotificationEvent;
+import com.tourism.forum.dto.moderation.ModerationResult;
 import com.tourism.forum.dto.request.CommentRequest;
 import com.tourism.forum.dto.request.CreatePostRequest;
 import com.tourism.forum.dto.request.PostFilterRequest;
@@ -15,6 +16,8 @@ import com.tourism.forum.feign.dto.UserBriefResponse;
 import com.tourism.forum.messaging.ForumEventPublisher;
 import com.tourism.forum.repository.*;
 import com.tourism.forum.service.ForumService;
+import com.tourism.forum.service.ModerationService;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -47,6 +50,7 @@ public class ForumServiceImpl implements ForumService {
     private final IamFeignClient iamFeignClient;
     private final ForumEventPublisher forumEventPublisher;
     private final FollowerRepository followerRepository;
+    private final ModerationService moderationService;
 
     // Simple in-memory cache cho user info (tránh Feign call lặp lại)
     private final Map<Integer, UserBriefResponse> userCache = new ConcurrentHashMap<>();
@@ -107,6 +111,9 @@ public class ForumServiceImpl implements ForumService {
             .status(post.getStatus() != null ? post.getStatus().name() : null)
             .isLikedByCurrentUser(isLiked)
             .isBookmarkedByCurrentUser(isBookmarked)
+            .moderationLabel(post.getModerationLabel())
+            .moderationReason(post.getModerationReason())
+            .moderationScore(post.getModerationScore())
             .createdAt(post.getCreatedAt())
             .publishedAt(post.getPublishedAt())
             .build();
@@ -197,6 +204,9 @@ public class ForumServiceImpl implements ForumService {
             .isLikedByCurrentUser(isLiked)
             .isBookmarkedByCurrentUser(false)
             .comments(comments)
+            .moderationLabel(post.getModerationLabel())
+            .moderationReason(post.getModerationReason())
+            .moderationScore(post.getModerationScore())
             .createdAt(post.getCreatedAt())
             .updatedAt(post.getUpdatedAt())
             .publishedAt(post.getPublishedAt())
@@ -279,6 +289,17 @@ public class ForumServiceImpl implements ForumService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Page<PostListResponse> getMyPostsForManagement(Integer userId, Pageable pageable) {
+        return forumPostRepository.findByUserIdAndNotDeleted(userId, pageable)
+            .map(p -> mapToListResponse(p, userId));
+    }
+
+    public PostListResponse mapPostToListResponse(ForumPost post, Integer currentUserId) {
+        return mapToListResponse(post, currentUserId);
+    }
+
+    @Override
     public PostDetailResponse createPost(CreatePostRequest request) {
         PostCategory category = categoryRepository.findById(request.getCategoryId())
             .orElseThrow(() -> new RuntimeException("Category not found: " + request.getCategoryId()));
@@ -314,6 +335,46 @@ public class ForumServiceImpl implements ForumService {
             .isFeatured(false)
             .build();
 
+        // ── AI Moderation ──────────────────────────────────────────────────────────
+        // Chỉ moderate khi user muốn PUBLISH (không moderate bản nháp)
+        if (ContentStatus.PUBLISHED.equals(post.getStatus())) {
+            String textToAnalyze = post.getTitle() + "\n" + stripHtml(post.getContent());
+            ModerationResult mod = moderationService.analyze(textToAnalyze, "post");
+
+            post.setModerationScore(mod.getScore());
+            post.setModerationLabel(mod.getLabel());
+            post.setModerationReason(mod.getReason());
+            post.setModeratedAt(LocalDateTime.now());
+
+            switch (mod.getLabel()) {
+                case "TOXIC" -> {
+                    post.setStatus(ContentStatus.HIDDEN);
+                    log.info("Post blocked by AI: score={}, reason={}", mod.getScore(), mod.getReason());
+                }
+                case "BORDERLINE" -> {
+                    post.setStatus(ContentStatus.PENDING_REVIEW);
+                    log.info("Post sent to review queue: score={}", mod.getScore());
+                }
+            }
+
+            if("TOXIC".equals(mod.getLabel())){
+                    forumEventPublisher.publishModerationEvent(
+                        post.getUserId(),
+                        "POST_REJECTED",
+                        "Bài viết vi phạm tiêu chuẩn cộng đồng",
+                        mod.getReason()
+                    );
+            }
+            if ("BORDERLINE".equals(mod.getLabel())) {
+                forumEventPublisher.publishModerationEvent(
+                post.getUserId(),
+                "POST_PENDING",
+                "Bài viết đang chờ kiểm duyệt",
+                "Chúng tôi sẽ xem xét và phản hồi sớm nhất có thể"
+            );
+        }   
+    }
+        // ──────────────────────────────────────────────────────────────────────────
         forumPostRepository.save(post);
 
         // Tags
@@ -444,6 +505,22 @@ public class ForumServiceImpl implements ForumService {
         if (request.getParentCommentId() != null) {
             parentComment = commentRepository.findById(request.getParentCommentId()).orElse(null);
             comment.setParentComment(parentComment);
+        }
+
+        ModerationResult mod = moderationService.analyze(stripHtml(request.getContent()), "comment");
+
+        comment.setModerationScore(mod.getScore());
+        comment.setModerationLabel(mod.getLabel());
+        comment.setModerationReason(mod.getReason());
+        comment.setModeratedAt(LocalDateTime.now());
+
+        if("TOXIC".equals(mod.getLabel())){
+            comment.setStatus(ContentStatus.HIDDEN);
+            // Không tăng commentCount, không gửi notification
+            PostComment savedComment = commentRepository.save(comment);
+            return mapToDetailResponse(post, request.getUserId());
+        } else if ("BORDERLINE".equals(mod.getLabel())) {
+            comment.setStatus(ContentStatus.PENDING_REVIEW); 
         }
 
         PostComment savedComment = commentRepository.save(comment);
@@ -681,5 +758,13 @@ public class ForumServiceImpl implements ForumService {
         post.setIsDeleted(true);
         post.setDeletedAt(LocalDateTime.now());
         forumPostRepository.save(post);
+    }
+
+    private String stripHtml(String html) {
+        if (html == null) return "";
+        return html.replaceAll("<[^>]+>", " ")
+                .replaceAll("&[a-zA-Z]+;", " ")   // &nbsp; &amp; v.v.
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 }

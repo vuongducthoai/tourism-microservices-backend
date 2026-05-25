@@ -16,6 +16,27 @@ public class ForumEventPublisher {
     private static final String EXCHANGE = "tourism.events";
     private final RabbitTemplate rabbitTemplate;
 
+    // Gửi thông báo moderation cho user (bài bị từ chối / chờ duyệt)
+    public void publishModerationEvent(Integer userId, String eventType, String title, String reason) {
+        if (userId == null) return;
+        ForumNotificationEvent event = ForumNotificationEvent.builder()
+                .idempotencyKey(eventType + "-" + userId + "-" + System.currentTimeMillis())
+                .eventType(eventType)
+                .recipientUserId(userId)
+                .actorUserId(null)
+                .actorName("Hệ thống kiểm duyệt")
+                .actorAvatar(null)
+                .postTitle(title + (reason != null && !reason.isBlank() ? ": " + reason : ""))
+                .build();
+        try {
+            String routingKey = "forum.notification." + eventType.toLowerCase();
+            rabbitTemplate.convertAndSend(EXCHANGE, routingKey, event);
+            log.info("Published moderation event: {} for userId={}", eventType, userId);
+        } catch (Exception e) {
+            log.warn("Failed to publish moderation event (non-critical): {}", e.getMessage());
+        }
+    }
+
     // Gửi forum notification vào RabbitMQ
     public void publishForumEvent(ForumNotificationEvent event) {
        // Không gửi nếu người nhận = người gửi (tự like/ comment chính mình)

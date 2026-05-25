@@ -71,6 +71,18 @@ public class ForumPostController {
                 "data", forumService.getPostsByUser(userId, pageable, viewerId)));
     }
 
+    // Endpoint cho trang quản lý: trả TẤT CẢ bài (kể cả HIDDEN, PENDING_REVIEW, DRAFT)
+    @GetMapping("/user/{userId}/manage")
+    public ResponseEntity<?> getMyPostsForManagement(
+            @PathVariable Integer userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size
+    ) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        return ResponseEntity.ok(Map.of("success", true,
+                "data", forumService.getMyPostsForManagement(userId, pageable)));
+    }
+
     @PostMapping
     public ResponseEntity<?> createPost(@Valid @RequestBody CreatePostRequest request) {
         PostDetailResponse response = forumService.createPost(request);

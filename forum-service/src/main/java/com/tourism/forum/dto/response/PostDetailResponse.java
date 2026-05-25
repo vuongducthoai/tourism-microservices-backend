@@ -45,6 +45,11 @@ public class PostDetailResponse {
 
     private List<CommentResponse> comments;
 
+    // AI Moderation info
+    private String moderationLabel;   // SAFE / BORDERLINE / TOXIC
+    private String moderationReason;
+    private Double moderationScore;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
 

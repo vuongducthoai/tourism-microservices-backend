@@ -42,6 +42,11 @@ public class PostListResponse {
     private Boolean isLikedByCurrentUser;
     private Boolean isBookmarkedByCurrentUser;
 
+    // AI Moderation info
+    private String moderationLabel;
+    private String moderationReason;
+    private Double moderationScore;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
 
