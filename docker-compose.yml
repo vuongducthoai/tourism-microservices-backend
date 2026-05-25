@@ -416,6 +416,7 @@ services:
       - EUREKA_HOST=service-discovery
       - RABBITMQ_HOST=rabbitmq
       - GEMINI_API_KEY=
+
     depends_on:
       service-discovery:
         condition: service_healthy
