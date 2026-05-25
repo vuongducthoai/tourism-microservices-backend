@@ -25,7 +25,7 @@ spring:
 # ─── Gemini AI ───
 gemini:
   api:
-    key: ${GEMINI_API_KEY:}
+    key: ${GEMINI_API_KEY:AIzaSyDvZdNdLVMbowZvthuqnSZnPIAOSiFSYJc}
   generation:
     model: gemini-flash-latest
     temperature: 0.7
