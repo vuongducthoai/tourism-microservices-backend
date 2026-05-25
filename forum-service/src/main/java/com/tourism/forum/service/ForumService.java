@@ -27,6 +27,9 @@ public interface ForumService {
 
     Page<PostListResponse> getPostsByUser(Integer userId, Pageable pageable, Integer currentUserId);
 
+    // Trang quản lý: trả tất cả bài kể cả HIDDEN / PENDING_REVIEW
+    Page<PostListResponse> getMyPostsForManagement(Integer userId, Pageable pageable);
+
     PostDetailResponse createPost(CreatePostRequest request);
 
     PostDetailResponse getPostDetail(Integer postId, Integer currentUserId);

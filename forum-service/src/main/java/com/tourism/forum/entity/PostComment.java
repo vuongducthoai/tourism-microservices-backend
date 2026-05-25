@@ -3,6 +3,7 @@ package com.tourism.forum.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Entity
@@ -42,4 +43,17 @@ public class PostComment extends BaseEntity {
 
     @OneToMany(mappedBy = "parentComment", cascade = CascadeType.ALL)
     private List<PostComment> replies;
+
+    // ── AI Moderation ─────────────────────────────────────────────────────────
+    @Column(name = "moderation_score")
+    private Double moderationScore;           // 0.0 – 1.0 (0 = sạch, 1 = toxic)
+
+    @Column(name = "moderation_label", length = 50)
+    private String moderationLabel;           // "SAFE" | "BORDERLINE" | "TOXIC"
+
+    @Column(name = "moderation_reason", columnDefinition = "TEXT")
+    private String moderationReason;          // giải thích ngắn từ AI
+
+    @Column(name = "moderated_at")
+    private LocalDateTime moderatedAt;
 }

@@ -18,6 +18,6 @@ public class Follower extends BaseEntity {
     private Integer followerUserId;
 
     // Người được theo dõi (IAM Service)
-    @Column(name = "following_user_id", nullable = false)
+    @Column(name = "following_id", nullable = false)
     private Integer followingUserId;
 }

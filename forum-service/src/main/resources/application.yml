@@ -76,3 +76,17 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+
+groq:
+  api:
+    key: ${GROQ_API_KEY}
+    model: llama-3.3-70b-versatile
+
+moderation:
+  thresholds:
+    safe: 0.3     # score < 0.3  → SAFE → auto publish 
+    toxic: 0.7   # score >= 0.7 → TOXIC → auto reject
+     # 0.3 – 0.7 → BORDERLINE → chờ admin duyệt
+  enabled: true  # false = tắt moderation, mọi bài tự động PUBLISHED
+

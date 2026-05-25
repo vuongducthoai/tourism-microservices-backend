@@ -95,4 +95,17 @@ public class ForumPost extends BaseEntity {
 
     @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PostBookmark> bookmarks = new ArrayList<>();
+
+    // ── AI Moderation ─────────────────────────────────────────────────────────
+    @Column(name = "moderation_score")
+    private Double moderationScore; // 0.0 – 1.0 (0 = sạch, 1 = toxic)
+
+    @Column(name = "moderation_label", length = 50)
+    private String moderationLabel; // "SAFE" | "BORDERLINE" | "TOXIC"
+
+    @Column(name = "moderation_reason", columnDefinition = "TEXT")
+    private String moderationReason; // giải thích ngắn từ AI
+
+    @Column(name = "moderated_at")
+    private LocalDateTime moderatedAt;
 }
