@@ -1,0 +1,443 @@
+package com.tourism.analytics.service;
+
+import com.tourism.analytics.dto.chatbot.ConversationState;
+import com.tourism.analytics.dto.chatbot.IntentResult;
+import com.tourism.analytics.dto.chatbot.IntentResult.Intent;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.text.Normalizer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Central intent router for chatbot messages.
+ *
+ * Business-critical questions are classified before the booking stage machine.
+ * That keeps SELECTING_DEPARTURE from swallowing support/booking/discount/detail
+ * questions as invalid dates.
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class IntentRouter {
+
+    private final ReferenceResolverService referenceResolver;
+    private final GeminiIntentService geminiIntentService;
+    private final LocationResolverService locationResolver;
+
+    private static final Pattern BK_PATTERN = Pattern.compile("(?i)(BK[A-Za-z0-9]{8,})");
+
+    public IntentResult route(String message, ConversationState state) {
+        if (message == null || message.isBlank()) {
+            return buildResult(Intent.UNKNOWN, "fast-path", 1.0);
+        }
+
+        String msg = message.trim();
+        String norm = normalize(msg);
+        ConversationState.Stage stage = state.getStage();
+
+        Matcher bkM = BK_PATTERN.matcher(msg);
+        if (bkM.find()) {
+            return IntentResult.builder()
+                    .intent(Intent.BOOKING_LOOKUP)
+                    .bookingCode(bkM.group(1).toUpperCase())
+                    .rawSource("fast-path")
+                    .confidence(1.0)
+                    .build();
+        }
+
+        if (isCancel(norm)) return buildResult(Intent.CANCEL, "fast-path", 1.0);
+        if (isResume(norm)) return buildResult(Intent.RESUME_BOOKING, "fast-path", 1.0);
+        if (isGreeting(norm)) return buildResult(Intent.GREETING, "fast-path", 0.98);
+
+        if (stage == ConversationState.Stage.CONFIRMING_BOOKING && isConfirm(norm)) {
+            return buildResult(Intent.BOOKING_FLOW, "fast-path", 1.0);
+        }
+        if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS && msg.matches("^[123]$")) {
+            return buildResult(Intent.TOUR_SEARCH, "fast-path", 1.0);
+        }
+        if (stage == ConversationState.Stage.SELECTING_DEPARTURE && msg.matches("^[123]$")) {
+            return buildResult(Intent.BOOKING_FLOW, "fast-path", 1.0);
+        }
+
+        if (referenceResolver.isPronounReference(msg) || referenceResolver.isContextualShortQuestion(msg)) {
+            ReferenceResolverService.ResolvedContext ctx = referenceResolver.resolve(msg, state);
+            if (!ctx.isAmbiguous()) {
+                Intent intent = mapResolvedIntent(ctx.resolvedIntent());
+                return IntentResult.builder()
+                        .intent(intent != null ? intent : Intent.ASK_DETAIL)
+                        .resolvedTourId(ctx.tourId())
+                        .resolvedDepId(ctx.departureId())
+                        .rawSource("reference-resolver")
+                        .confidence(0.9)
+                        .build();
+            }
+        }
+
+        if (isAskDiscount(norm)) return buildResult(Intent.ASK_DISCOUNT, "fast-path", 0.95);
+        if (isAskCoupon(norm)) return buildResult(Intent.ASK_COUPON, "fast-path", 0.95);
+        if (isSystemHelp(norm)) return buildResult(Intent.SYSTEM_HELP, "fast-path", 0.9);
+        if (isAskSlot(norm)) return buildAskResult(Intent.ASK_SLOT, norm, state);
+        if (isAskPrice(norm)) return buildAskResult(Intent.ASK_PRICE, norm, state);
+        if (isAskDepartureDate(norm)) return buildAskResult(Intent.ASK_DEPARTURE_DATE, norm, state);
+        if (isAskDetail(norm)) return buildAskResult(Intent.ASK_DETAIL, norm, state);
+        if (isLookupIntent(norm)) return buildResult(Intent.BOOKING_LOOKUP, "fast-path", 0.95);
+        if (isPaymentHelp(norm)) return buildResult(Intent.PAYMENT_HELP, "fast-path", 0.9);
+        if (isAskItinerary(norm)) return buildAskResult(Intent.ASK_ITINERARY, norm, state);
+
+        // B1: guard — câu hỏi đánh giá/review/xếp hạng KHÔNG phải booking intent
+        if (isRatingOrReviewQuery(norm)) return buildResult(Intent.UNKNOWN, "fast-path-rag", 0.95);
+
+        if (isBookingIntent(norm)) {
+            IntentResult r = extractSearchEntities(norm);
+            r.setIntent(Intent.BOOKING_FLOW);
+            r.setRawSource("fast-path");
+            r.setConfidence(0.9);
+            return r;
+        }
+
+        if (isStartLocationSearch(norm)) {
+            IntentResult r = extractSearchEntities(norm);
+            r.setIntent(Intent.START_LOCATION_SEARCH);
+            r.setRawSource("fast-path");
+            r.setConfidence(0.9);
+            return r;
+        }
+
+        if (isChangeSearch(norm)) {
+            IntentResult r = extractSearchEntities(norm);
+            r.setIntent(Intent.CHANGE_SEARCH);
+            r.setRawSource("fast-path");
+            r.setConfidence(0.85);
+            return r;
+        }
+
+        // B0: stage-aware fast-path for common booking-flow answers → avoid Gemini call
+        if (stage == ConversationState.Stage.COLLECTING_SEARCH_INFO) {
+            if (isMonthInput(norm)) {
+                return buildResult(Intent.TOUR_SEARCH, "fast-path-stage", 0.88);
+            }
+            if (isPeopleCountInput(norm)) {
+                return buildResult(Intent.TOUR_SEARCH, "fast-path-stage", 0.88);
+            }
+            if (isNewDestinationInput(norm, state)) {
+                IntentResult r = extractSearchEntities(norm);
+                r.setIntent(Intent.CHANGE_SEARCH);
+                r.setRawSource("fast-path-stage");
+                r.setConfidence(0.88);
+                return r;
+            }
+        }
+        if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS && isNumericSelection(norm)) {
+            return buildResult(Intent.TOUR_SEARCH, "fast-path-stage", 0.9);
+        }
+
+        if (isTourSearch(norm) || hasSearchLocation(norm)) {
+            IntentResult r = extractSearchEntities(norm);
+            r.setRawSource("fast-path");
+            r.setConfidence(0.85);
+            return r;
+        }
+
+        if (state.getRecentTurns() != null && !state.getRecentTurns().isEmpty()) {
+            try {
+                IntentResult geminiResult = geminiIntentService.classify(msg, state);
+                if (geminiResult != null && geminiResult.getIntent() != Intent.UNKNOWN) {
+                    log.info("Gemini classified intent={}", geminiResult.getIntent());
+                    return geminiResult;
+                }
+            } catch (Exception e) {
+                log.warn("⚠ Gemini intent classification failed: {}", e.getMessage());
+                // B0: Gemini quota/error → stage-aware fallback instead of UNKNOWN
+                return fallbackIntentByStage(stage, norm, state);
+            }
+        }
+
+        // B0: no Gemini (no history) → stage-aware fallback
+        return fallbackIntentByStage(stage, norm, state);
+    }
+
+    private boolean isAskSlot(String s) {
+        return s.matches(".*(con\\s*may\\s*slot|con\\s*cho\\s*khong|het\\s*cho\\s*chua|\\bslot\\b|cho\\s*trong|bao\\s*nhieu\\s*cho|con\\s*cho|may\\s*slot).*");
+    }
+
+    private boolean isAskPrice(String s) {
+        return s.matches(".*(gia\\s*(tour|chuyen|do|nay|bao|cua)|bao\\s*nhieu\\s*tien|may\\s*tien|gia\\s*bao|chi\\s*phi|tien\\s*tour).*")
+                && !s.matches(".*(tre\\s*em|em\\s*be).*");
+    }
+
+    private boolean isAskDepartureDate(String s) {
+        return s.matches(".*(ngay\\s*khoi\\s*hanh|lich\\s*khoi\\s*hanh|ngay\\s*di|khi\\s*nao\\s*khoi\\s*hanh|ngay\\s*xuat\\s*phat).*");
+    }
+
+    private boolean isAskDetail(String s) {
+        return s.matches(".*(xem\\s*chi\\s*tiet|chi\\s*tiet\\s*tour|tour\\s*nay\\s*co\\s*gi|tour\\s*do\\s*co\\s*gi|thong\\s*tin\\s*tour).*");
+    }
+
+    private boolean isAskItinerary(String s) {
+        return s.matches(".*(lich\\s*trinh|chuong\\s*trinh|ngay\\s*1\\s*di|bao\\s*gom\\s*gi|diem\\s*tham\\s*quan|an\\s*gi|o\\s*dau).*");
+    }
+
+    private boolean isAskDiscount(String s) {
+        return s.matches(".*(giam\\s*gia|uu\\s*dai|khuyen\\s*mai|sale|gia\\s*re|gia\\s*tot|dang\\s*giam|re\\s*nhat).*");
+    }
+
+    private boolean isAskCoupon(String s) {
+        return s.matches(".*(coupon|ma\\s*giam|voucher|ma\\s*khuyen|promo\\s*code|discount\\s*code).*");
+    }
+
+    // B1: guard for rating/review/ranking queries — should NOT trigger booking flow
+    private boolean isRatingOrReviewQuery(String s) {
+        return s.matches(".*(duoc\\s*danh\\s*gia|xep\\s*hang|noi\\s*tieng|pho\\s*bien|duoc\\s*yeu|tot\\s*nhat"
+                + "|uy\\s*tin|review|rating|danh\\s*gia\\s*cao|diem\\s*so|binh\\s*luan|nhan\\s*xet"
+                + "|khach\\s*hang\\s*thich|duoc\\s*khen|an\\s*tuong|de\\s*cu|nhat|hay\\s*nhat|khuyen\\s*nao).*");
+    }
+
+    // B0: stage-aware fallback when Gemini is unavailable
+    private IntentResult fallbackIntentByStage(ConversationState.Stage stage, String norm, ConversationState state) {
+        if (stage == ConversationState.Stage.COLLECTING_SEARCH_INFO) {
+            // In search info collection stage, treat any input as tour search partial
+            IntentResult r = extractSearchEntities(norm);
+            r.setRawSource("stage-fallback");
+            r.setConfidence(0.65);
+            return r;
+        }
+        if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS) {
+            return buildResult(Intent.TOUR_SEARCH, "stage-fallback", 0.65);
+        }
+        if (stage == ConversationState.Stage.SELECTING_DEPARTURE) {
+            return buildResult(Intent.TOUR_SEARCH, "stage-fallback", 0.65);
+        }
+        if (stage == ConversationState.Stage.COLLECTING_PASSENGERS
+                || stage == ConversationState.Stage.COLLECTING_CONTACT_NAME_PHONE
+                || stage == ConversationState.Stage.COLLECTING_CONTACT_EMAIL
+                || stage == ConversationState.Stage.CONFIRMING_BOOKING
+                || stage == ConversationState.Stage.BOOKING_SUCCESS
+                || stage == ConversationState.Stage.COLLECTING_LOOKUP_CODE) {
+            return buildResult(Intent.BOOKING_FLOW, "stage-fallback", 0.65);
+        }
+        return buildResult(Intent.UNKNOWN, "fast-path", 0.3);
+    }
+
+    // B0: is input just a month indicator? e.g. "thang 6", "t7"
+    private boolean isMonthInput(String s) {
+        return s.matches("^(thang\\s*[1-9][0-2]?|t[1-9]|thang\\s*[1-9]|[0-9]{1,2}/[0-9]{4})$")
+                || s.matches(".*(thang\\s*[1-9][0-2]?|quy\\s*[1-4]|dau\\s*nam|cuoi\\s*nam|he\\s*nay|dip\\s*tet|dip\\s*le|le\\s*30/4|le\\s*2/9).*");
+    }
+
+    // B0: is input a people count? e.g. "2 nguoi lon", "3 adults"
+    private boolean isPeopleCountInput(String s) {
+        return s.matches(".*(\\d+\\s*(nguoi\\s*(lon|adult|nguoi|khach)|adults?|people|person|khach|nguoi)).*")
+                || s.matches("^(\\d+|mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi)\\s*(nguoi|khach|person|adult).*");
+    }
+
+    // B0: numeric selection in search results  e.g. "1", "chon 2", "tour so 3"
+    private boolean isNumericSelection(String s) {
+        return s.matches("^[123]$") || s.matches(".*(chon\\s*[123]|so\\s*[123]|tour\\s*[123]|option\\s*[123]).*");
+    }
+
+    // B2: detect that user is inputting a NEW destination while COLLECTING_SEARCH_INFO
+    private boolean isNewDestinationInput(String norm, ConversationState state) {
+        if (state.getSearchDestination() == null) return false;
+        String newDest = extractFreeDestination(norm);
+        if (newDest == null) newDest = extractLocation(norm, LocationResolverService.Role.DESTINATION);
+        if (newDest == null) return false;
+        // Has a new location different from current destination
+        String normalizedCurrent = normalize(state.getSearchDestination());
+        String normalizedNew = normalize(newDest);
+        return !normalizedCurrent.equals(normalizedNew);
+    }
+
+    private boolean isSystemHelp(String s) {
+        return s.matches(".*(co\\s*ho\\s*tro\\s*dat\\s*tour|dat\\s*tour\\s*tren\\s*(web|nay|do)?|ho\\s*tro\\s*dat|dat\\s*online|co\\s*dat\\s*duoc\\s*khong).*");
+    }
+
+    private boolean isTourSearch(String s) {
+        return s.matches(".*(tour\\s*(nao|den|di|o|tai|co|gia)|tim\\s*tour|toi\\s*muon\\s*di|muon\\s*di|"
+                + "di\\s*(du\\s*lich|tham\\s*quan|bien|nui)|co\\s*tour\\s*(nao|di|den)|goi\\s*y\\s*tour|"
+                + "tim\\s*(tour|chuyen|chuyen\\s*di)|^di\\s+[a-z].*).*")
+                || (s.matches(".*\\b(co|hoi|xem|di|den)\\b.*") && hasSearchLocation(s));
+    }
+
+    private boolean isBookingIntent(String s) {
+        return s.matches(".*(toi\\s*)?(muon\\s*)?(dat\\s*tour|book\\s*tour|mua\\s*tour|dat\\s*cho|dat\\s*ngay|dat\\s*cho\\s*toi|dat\\s*tiep).*")
+                || s.matches(".*(dat|book)\\s+(tour|chuyen)\\s*(nay|do|tren|so\\s*[123])?.*");
+    }
+
+    private boolean isLookupIntent(String s) {
+        return s.matches(".*(tra\\s*cuu|kiem\\s*tra\\s*don|xem\\s*don|tinh\\s*trang\\s*don|xem.*booking|tra\\s*booking|ma\\s*booking|\\bbooking\\b|don\\s*hang|don\\s*cua\\s*toi|booking\\s*cua\\s*toi|lich\\s*su\\s*dat).*");
+    }
+
+    private boolean isPaymentHelp(String s) {
+        return s.matches(".*(thanh\\s*toan|payos|payment|qr\\s*code|chuyen\\s*khoan|da\\s*thanh\\s*toan).*");
+    }
+
+    private boolean isChangeSearch(String s) {
+        // B2: expanded patterns for destination change intent
+        return s.matches(".*(tim\\s*lai|tim\\s*tour\\s*khac|doi\\s*diem|doi\\s*ngay|thay\\s*doi\\s*tim|doi\\s*sang"
+                + "|bay\\s*gio\\s*(di|den|muon\\s*di)\\s+[a-z]"
+                + "|muon\\s*(di|den)\\s+[a-z]"
+                + "|thay\\s*(diem|tour|sang)"
+                + "|di\\s+[a-z][a-z\\s]+\\s*(di|thoi|nhe|luon|vay)"
+                + "|khac\\s*(di|nhe|di|nao)"
+                + "|doi\\s*(sang|qua|thanh)).*");
+    }
+
+    private boolean isCancel(String s) {
+        // Exact single-word cancel (must be the ENTIRE message)
+        if (s.equals("huy") || s.equals("thoi") || s.equals("cancel") || s.equals("thoat")) return true;
+        // Multi-word: only explicit cancel compound phrases (bare "huy" removed to avoid matching "huy bo bao hiem" etc.)
+        return s.matches(".*(^|\\s)(cancel|bo\\s*qua|khong\\s*can\\s*nua|khong\\s*dat|thoi\\s*di|huy\\s*di|huy\\s*thoi|thoi\\s+khong|huy\\s*tour|huy\\s*dat)(\\s|$|[.!?]).*");
+    }
+
+    private boolean isResume(String s) {
+        return s.matches(".*(tiep\\s*tuc|resume|quay\\s*lai|dat\\s*tiep).*");
+    }
+
+    private boolean isGreeting(String s) {
+        return s.matches("^(xin\\s*chao|chao|hello|hi|hey|alo|alo\\s*ban).*$");
+    }
+
+    private boolean isStartLocationSearch(String s) {
+        return s.matches(".*(khoi\\s*hanh|xuat\\s*phat|di\\s*tu|toi\\s*o|minh\\s*o|o\\s+.+\\s+thi|tu\\s+.+).*")
+                && locationResolver.resolve(s, LocationResolverService.Role.START).isPresent();
+    }
+
+    private boolean isConfirm(String s) {
+        return s.matches(".*(xac\\s*nhan|confirm|dong\\s*y|ok|yes|dat\\s*ngay).*");
+    }
+
+    private IntentResult buildAskResult(Intent intent, String norm, ConversationState state) {
+        Integer tourIdx = null;
+        if (norm.contains("tour 1") || norm.contains("cai 1") || norm.contains("cai dau") || norm.contains("so 1")) {
+            tourIdx = 0;
+        } else if (norm.contains("tour 2") || norm.contains("cai 2") || norm.contains("so 2")) {
+            tourIdx = 1;
+        } else if (norm.contains("tour 3") || norm.contains("cai 3") || norm.contains("so 3")) {
+            tourIdx = 2;
+        } else if (norm.matches(".*(tour\\s*do|tour\\s*nay|cai\\s*(nay|do)|no|tour\\s*tren).*")
+                && state.getLastMentionedTourId() != null
+                && state.getLastSearchResults() != null) {
+            for (int i = 0; i < state.getLastSearchResults().size(); i++) {
+                if (state.getLastMentionedTourId().equals(state.getLastSearchResults().get(i).getTourId())) {
+                    tourIdx = i;
+                    break;
+                }
+            }
+        }
+
+        return IntentResult.builder()
+                .intent(intent)
+                .resolvedTourIdx(tourIdx)
+                .queryText(extractQueryText(norm))
+                .rawSource("fast-path")
+                .confidence(0.9)
+                .build();
+    }
+
+    private IntentResult extractSearchEntities(String norm) {
+        IntentResult r = IntentResult.builder().intent(Intent.TOUR_SEARCH).build();
+
+        if (norm.matches(".*(khoi\\s*hanh|xuat\\s*phat|di\\s*tu|toi\\s*o|minh\\s*o|o\\s+.+\\s+thi|tu\\s+.+).*")) {
+            String start = extractLocation(norm, LocationResolverService.Role.START);
+            if (start != null) r.setStartLocation(start);
+        }
+
+        // "X đến Y" pattern: Y is always the destination (highest priority)
+        if (norm.contains(" den ") || norm.startsWith("den ")) {
+            String[] denParts = norm.split("\\bden\\b", 2);
+            if (denParts.length == 2) {
+                String afterDen = denParts[1].trim();
+                String destFromDen = extractLocation(afterDen, LocationResolverService.Role.DESTINATION);
+                if (destFromDen == null) destFromDen = extractLocation(afterDen, LocationResolverService.Role.ANY);
+                if (destFromDen == null) destFromDen = extractFreeDestination("di " + afterDen);
+                if (destFromDen != null) {
+                    r.setDestination(destFromDen);
+                    String beforeDen = denParts[0].trim();
+                    String startFromBefore = extractLocation(beforeDen, LocationResolverService.Role.ANY);
+                    if (startFromBefore != null) r.setStartLocation(startFromBefore);
+                }
+            }
+        }
+        if (r.getDestination() == null && !isStartLocationSearch(norm)) {
+            String dest = extractLocation(norm, LocationResolverService.Role.DESTINATION);
+            if (dest == null) dest = extractFreeDestination(norm);
+            if (dest != null) r.setDestination(dest);
+            if (norm.contains("di bien")) r.setDestination(null);
+        }
+
+        for (int m = 1; m <= 12; m++) {
+            if (norm.contains("thang " + m) || norm.contains("/" + String.format("%02d", m))) {
+                r.setTravelMonth("thang " + m);
+                break;
+            }
+        }
+
+        Matcher am = Pattern.compile("(\\d+)\\s*(nguoi\\s*lon|adult|nguoi|khach)").matcher(norm);
+        if (am.find()) r.setAdultCount(Integer.parseInt(am.group(1)));
+        r.setQueryText(extractQueryText(norm));
+        return r;
+    }
+
+    private boolean hasSearchLocation(String norm) {
+        return locationResolver.resolve(norm, LocationResolverService.Role.DESTINATION).isPresent()
+                || locationResolver.resolve(norm, LocationResolverService.Role.START).isPresent();
+    }
+
+    private String extractQueryText(String norm) {
+        if (norm == null || norm.isBlank()) return null;
+        String q = norm
+                .replaceAll("\\b(xem|cho|toi|minh|ban|giup|nhe|di|co|khong|ko|la|ve|thong tin|chi tiet|tour|chuyen|nay|do|tren|so|gia|bao nhieu|con may|slot|cho|ngay khoi hanh|lich trinh)\\b", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return q.isBlank() ? null : q;
+    }
+
+    private String extractFreeDestination(String norm) {
+        if (norm == null || norm.isBlank()) return null;
+        Matcher m = Pattern.compile(".*(?:tour\\s*)?(?:di|den|ve)\\s+(.+?)(?:\\s+(?:khong|ko|a|nhe|vay|thi\\s*sao))?$").matcher(norm);
+        if (!m.matches()) return null;
+        String dest = m.group(1)
+                .replaceAll("\\b(du\\s*lich|tham\\s*quan|tour|chuyen|cho\\s*toi|giup\\s*toi)\\b", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (dest.isBlank() || dest.length() < 2 || dest.length() > 40) return null;
+        if (dest.matches(".*\\b(bien|nui|gia\\s*re|uu\\s*dai|khuyen\\s*mai)\\b.*")) return null;
+        return dest;
+    }
+
+    private String extractLocation(String norm, LocationResolverService.Role role) {
+        return locationResolver.resolve(norm, role)
+                .map(LocationResolverService.ResolvedLocation::name)
+                .orElse(null);
+    }
+
+    private Intent mapResolvedIntent(String resolvedIntent) {
+        if (resolvedIntent == null) return null;
+        return switch (resolvedIntent) {
+            case "ASK_SLOT" -> Intent.ASK_SLOT;
+            case "ASK_PRICE" -> Intent.ASK_PRICE;
+            case "ASK_CHILD_PRICE" -> Intent.ASK_CHILD_PRICE;
+            case "ASK_DEPARTURE_DATE" -> Intent.ASK_DEPARTURE_DATE;
+            case "ASK_ITINERARY" -> Intent.ASK_ITINERARY;
+            case "ASK_POLICY" -> Intent.ASK_POLICY;
+            default -> null;
+        };
+    }
+
+    private IntentResult buildResult(Intent intent, String source, double confidence) {
+        return IntentResult.builder().intent(intent).rawSource(source).confidence(confidence).build();
+    }
+
+    private String normalize(String text) {
+        if (text == null) return "";
+        return Normalizer.normalize(text.replace('đ', 'd').replace('Đ', 'D'), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .toLowerCase()
+                .replaceAll("[^a-z0-9/\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+}

@@ -21,11 +21,16 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:tourism}
     password: ${RABBITMQ_PASSWORD:tourism123}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 5000ms
 
 # ─── Gemini AI ───
 gemini:
   api:
-    key: ${GEMINI_API_KEY:AIzaSyDvZdNdLVMbowZvthuqnSZnPIAOSiFSYJc}
+    key: ${GEMINI_API_KEY:}
   generation:
     model: gemini-flash-latest
     temperature: 0.7
@@ -51,6 +56,9 @@ eureka:
       defaultZone: http://${EUREKA_HOST:localhost}:8761/eureka/
   instance:
     prefer-ip-address: true
+
+app:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
 
 management:
   endpoints:

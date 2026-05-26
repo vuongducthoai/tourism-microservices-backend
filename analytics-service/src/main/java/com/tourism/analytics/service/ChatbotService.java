@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.tourism.analytics.dto.ChatMessageRequest;
 import com.tourism.analytics.dto.ChatMessageResponse;
 import com.tourism.analytics.dto.VectorDocumentDTO;
+import com.tourism.analytics.dto.chatbot.ConversationState;
+import com.tourism.analytics.dto.chatbot.IntentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,16 +18,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * ChatbotService — chuỗi RAG (Retrieval-Augmented Generation):
+ * ChatbotService — chuỗi RAG (Retrieval-Augmented Generation) + Stateful Booking Flow:
  *
- *   1. Nhận message từ user
- *   2. Embed câu hỏi → Pinecone search topK documents
- *   3. Build context từ retrieved documents
- *   4. Build prompt (Vietnamese) → gọi Gemini để sinh câu trả lời
- *   5. Build TourSuggestion từ metadata của retrieved documents
- *   6. Trả về ChatMessageResponse
- *
- * Không truy cập DB trực tiếp — toàn bộ thông tin từ Pinecone metadata.
+ *   - Nếu user đang trong booking flow (Redis session có stage != IDLE) → ủy quyền BookingConversationService
+ *   - Nếu phát hiện booking/lookup intent → ủy quyền BookingConversationService
+ *   - Ngược lại → RAG Pinecone + Gemini như cũ
  */
 @Service
 @RequiredArgsConstructor
@@ -38,21 +35,21 @@ public class ChatbotService {
     @Value("${gemini.generation.model}")
     private String generationModel;
 
-    private final VectorService vectorService;
-    private final RestTemplate  restTemplate;
-    private final Gson          gson = new Gson();
+    private final VectorService              vectorService;
+    private final RestTemplate               restTemplate;
+    private final RedisSessionService        sessionService;
+    private final BookingConversationService bookingService;
+    private final IntentRouter               intentRouter;
+    private final Gson                       gson = new Gson();
 
     private static final String GEMINI_GENERATE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/";
 
-    // Regex detect câu hỏi về giảm giá theo giá (originalPrice > salePrice)
-    // Khớp cả có dấu lẫn không dấu (giam gia / giảm giá)
     private static final String DISCOUNT_PATTERN =
             ".*(giảm\\s*(giá|sâu)|giam\\s*(gia|sau)|ưu\\s*đãi|uu\\s*dai|khuyến\\s*mãi|khuyen\\s*mai"
             + "|rẻ\\s*nhất|re\\s*nhat|tiết\\s*kiệm|tiet\\s*kiem|sale|giá\\s*tốt|gia\\s*tot|giá\\s*rẻ|gia\\s*re"
             + "|ty\\s*le\\s*giam|tỷ\\s*lệ\\s*giảm).*";
 
-    // Regex detect câu hỏi về coupon / mã giảm giá cụ thể (có dấu và không dấu)
     private static final String COUPON_PATTERN =
             ".*(coupon|mã\\s*giảm|ma\\s*giam|voucher|mã\\s*khuyến|ma\\s*khuyen|mã\\s*ưu|ma\\s*uu"
             + "|promo\\s*code|discount\\s*code).*";
@@ -61,45 +58,685 @@ public class ChatbotService {
     // MAIN HANDLER
     // ─────────────────────────────────────────────
 
-    /**
-     * Xử lý tin nhắn của user, trả về câu trả lời + tour gợi ý.
-     */
     public ChatMessageResponse handleUserMessage(ChatMessageRequest request) {
         log.info("💬 Chatbot received: {}", request.getMessage());
 
         String userMessage = request.getMessage();
         String sessionId   = request.getSessionId() != null ? request.getSessionId() : UUID.randomUUID().toString();
+        ChatMessageRequest finalRequest = ChatMessageRequest.builder()
+                .message(userMessage).sessionId(sessionId).userId(request.getUserId()).build();
 
+        // 1. Load session state from Redis
+        ConversationState state = sessionService.getOrCreate(sessionId);
+
+        // 2. Record user turn in recentTurns
+        addTurn(state, "user", userMessage);
+
+        ChatMessageResponse resp = null;
+
+        // 3. IntentRouter ALWAYS runs first — classifies intent regardless of stage
+        IntentResult intent = intentRouter.route(userMessage, state);
+        log.info("🎯 Intent: {} (source={}, confidence={})", intent.getIntent(), intent.getRawSource(), intent.getConfidence());
+
+        // 4a. Deterministic handlers (no Gemini needed for known intents)
+        resp = handleDeterministic(intent, userMessage, sessionId, state, finalRequest);
+
+        // 4b. Booking flow handler (state machine)
+        if (resp == null) {
+            resp = handleBookingFlow(intent, finalRequest, state);
+        }
+
+        // 5. Fall through to RAG if no booking service handled it
+        if (resp == null) {
+            resp = handleWithRAG(userMessage, finalRequest, sessionId, state);
+        }
+
+        // 6. Record assistant turn in recentTurns
+        if (resp != null && resp.getReply() != null) {
+            addTurn(state, "assistant", resp.getReply());
+            sessionService.save(sessionId, state);
+        }
+
+        return resp;
+    }
+
+    /** Add a turn to recentTurns, keeping max 6 turns (3 exchanges) */
+    private void addTurn(ConversationState state, String role, String content) {
+        if (state.getRecentTurns() == null) {
+            state.setRecentTurns(new ArrayList<>());
+        }
+        state.getRecentTurns().add(ConversationState.ChatTurn.builder()
+                .role(role)
+                .content(content != null && content.length() > 300 ? content.substring(0, 300) + "…" : content)
+                .timestamp(System.currentTimeMillis())
+                .build());
+        // Keep max 6 turns (3 user + 3 assistant)
+        while (state.getRecentTurns().size() > 6) {
+            state.getRecentTurns().remove(0);
+        }
+    }
+
+    private ChatMessageResponse handleWithRAG(String userMessage, ChatMessageRequest request, String sessionId, ConversationState state) {
         boolean isDiscountQuery = userMessage.toLowerCase().matches(DISCOUNT_PATTERN);
         boolean isCouponQuery   = userMessage.toLowerCase().matches(COUPON_PATTERN);
         int topK = (isDiscountQuery || isCouponQuery) ? 50 : 10;
 
-        // 1. Retrieve from Pinecone
         List<VectorDocumentDTO> docs = vectorService.searchSimilar(userMessage, topK);
         log.debug("🔍 Retrieved {} documents from Pinecone (topK={})", docs.size(), topK);
 
-        // 2. Build context
+        // Build context (with recentTurns if available)
         String context = buildEnhancedContext(docs, userMessage);
+        String contextWindow = buildContextWindow(state);
 
-        // 3. Build prompt & call Gemini
-        String prompt = buildEnhancedPrompt(userMessage, context);
+        // Inject booking context block when session is active
+        String bookingBlock = buildBookingContextBlock(state);
+        if (!bookingBlock.isEmpty()) {
+            context = bookingBlock + "\n\n" + context;
+        }
+
+        // Build prompt & call Gemini
+        String prompt = buildEnhancedPromptWithHistory(userMessage, context, contextWindow);
         String reply  = callGeminiAPI(prompt);
 
-        // 4. Build tour suggestions
-        List<ChatMessageResponse.TourSuggestion> suggestions = buildTourSuggestions(docs);
-
-        // 5. Build quick actions
+        boolean showTourCards = !isSupportStyleQuery(userMessage)
+                && (isDiscountQuery || isCouponQuery || isTourLikeQuery(userMessage));
+        List<ChatMessageResponse.TourSuggestion> suggestions = showTourCards
+                ? buildTourSuggestions(docs)
+                : new ArrayList<>();
         List<ChatMessageResponse.QuickAction> quickActions = buildQuickActions(request);
+
+        // Add resume/cancel actions when session is in progress
+        if (state.getStage() != ConversationState.Stage.IDLE) {
+            quickActions.add(ChatMessageResponse.QuickAction.builder()
+                    .label("▶ Tiếp tục đặt tour").action("RESUME_BOOKING").build());
+            quickActions.add(ChatMessageResponse.QuickAction.builder()
+                    .label("✖ Hủy").action("CANCEL").build());
+        }
 
         return ChatMessageResponse.builder()
                 .reply(reply)
                 .tourSuggestions(suggestions)
                 .quickActions(quickActions)
                 .sessionId(sessionId)
-                .timestamp(LocalDateTime.now())
+                .timestamp(java.time.LocalDateTime.now())
+                .messageType("TEXT")
+                .conversationStage(state.getStage().name())
                 .build();
     }
 
+    /**
+     * handleDeterministic — xử lý intent không cần Gemini (ASK_SLOT, ASK_PRICE, ASK_DEPARTURE_DATE, BOOKING_LOOKUP).
+     * Trả về null nếu không xử lý được.
+     */
+    private ChatMessageResponse handleDeterministic(IntentResult intent, String userMessage,
+                                                     String sessionId, ConversationState state,
+                                                     ChatMessageRequest request) {
+        switch (intent.getIntent()) {
+            case GREETING -> {
+                // B3: reset booking state so user can start fresh without leftover context
+                boolean hadActiveSession = state.getStage() != ConversationState.Stage.IDLE;
+                state.setStage(ConversationState.Stage.IDLE);
+                state.setSearchDestination(null);
+                state.setSearchStartLocation(null);
+                state.setSearchStartLocationProvided(false);
+                state.setSearchDateRange(null);
+                state.setSearchDateRangeProvided(false);
+                state.setLastSearchResults(null);
+                state.setLastDepartures(null);
+                state.setLastMentionedTourId(null);
+                state.setPassengers(new java.util.ArrayList<>());
+                sessionService.save(sessionId, state);
+                String greetReply = hadActiveSession
+                        ? "Chào lại bạn! Mình đã reset phiên cũ. Bạn cần hỗ trợ gì nào?"
+                        : "Chào bạn, mình có thể hỗ trợ tìm tour, xem booking, kiểm tra thanh toán hoặc tư vấn lịch trình.\nBạn đang cần hỗ trợ phần nào?";
+                return buildResponse(greetReply, sessionId, state, List.of(
+                        ChatMessageResponse.QuickAction.builder().label("Tìm tour").action("RESET_SEARCH").build(),
+                        ChatMessageResponse.QuickAction.builder().label("Xem booking").action("LOOKUP").build(),
+                        ChatMessageResponse.QuickAction.builder().label("Tour giảm giá").action("VIEW_DEALS").url("/tours?sort=discount").build()
+                ));
+            }
+            case CANCEL -> {
+                state.setStage(ConversationState.Stage.IDLE);
+                sessionService.save(sessionId, state);
+                return buildResponse("Đã hủy luồng hiện tại. Bạn cần tìm tour hay tra cứu booking nào khác không?", sessionId, state, new ArrayList<>());
+            }
+            case RESUME_BOOKING -> {
+                return buildResumeResponse(sessionId, state);
+            }
+            case BOOKING_LOOKUP -> {
+                // Direct BK lookup
+                String code = intent.getBookingCode() != null ? intent.getBookingCode()
+                        : bookingService.extractBookingCodePublic(userMessage);
+                if (code != null) {
+                    return bookingService.performLookupPublic(code, sessionId, state);
+                }
+                // B7: transition to COLLECTING_LOOKUP_CODE so next message is treated as BK code
+                state.setStage(ConversationState.Stage.COLLECTING_LOOKUP_CODE);
+                sessionService.save(sessionId, state);
+                return buildResponse("""
+                        Được. Bạn gửi mình mã booking dạng **BK...** để mình kiểm tra đúng đơn nhé.
+                        Nếu đang đặt tour dở, bạn có thể bấm **Tiếp tục đặt tour** để quay lại bước trước.
+                        """, sessionId, state, List.of(
+                        ChatMessageResponse.QuickAction.builder().label("Nhập mã booking").action("LOOKUP").build()
+                ));
+            }
+            case ASK_DISCOUNT, ASK_COUPON -> {
+                return buildDiscountAnswer(userMessage, sessionId, state, intent.getIntent() == IntentResult.Intent.ASK_COUPON);
+            }
+            case PAYMENT_HELP -> {
+                return buildResponse("""
+                        Để kiểm tra hoặc thanh toán đơn, bạn gửi mình **mã booking dạng BK...** nhé.
+                        Nếu đơn còn hạn thanh toán, hệ thống sẽ hiển thị link thanh toán PayOS trong chi tiết đơn.
+                        """, sessionId, state, List.of(
+                        ChatMessageResponse.QuickAction.builder().label("Nhập mã booking").action("LOOKUP").build()
+                ));
+            }
+            case SYSTEM_HELP -> {
+                String reply = """
+                        Co, minh ho tro dat tour truc tiep tren chat.
+
+                        Minh se ho tro ban theo cac buoc:
+                        1. Chon tour va ngay khoi hanh.
+                        2. Nhap so luong nguoi lon/tre em/em be.
+                        3. Nhap thong tin tung hanh khach.
+                        4. Nhap thong tin lien he.
+                        5. Kiem tra tong tien roi xac nhan dat tour.
+
+                        Neu ban dang xem tour nao, gui **dat tour nay** hoac bam **Tiep tuc dat tour** nhe.
+                        """;
+                return buildResponse(reply, sessionId, state, List.of(
+                        ChatMessageResponse.QuickAction.builder().label("Tiep tuc dat tour").action("RESUME_BOOKING").build(),
+                        ChatMessageResponse.QuickAction.builder().label("Xem booking").action("LOOKUP").build()
+                ));
+            }
+            case ASK_DETAIL, ASK_ITINERARY -> {
+                ChatMessageResponse detail = buildTourDetailAnswer(intent, sessionId, state);
+                if (detail != null) return detail;
+            }
+            case ASK_SLOT -> {
+                List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
+                if (results == null || results.isEmpty()) {
+                    return buildResponse("Mình chưa có tour cụ thể trong phiên này để kiểm tra số chỗ. Bạn gửi tên tour hoặc điểm đến muốn hỏi nhé.", sessionId, state, new ArrayList<>());
+                }
+                Integer idx = intent.getResolvedTourIdx();
+                StringBuilder sb = new StringBuilder();
+                if (idx != null && idx >= 0 && idx < results.size()) {
+                    ConversationState.TourGroupDisplay t = results.get(idx);
+                    sb.append("**").append(t.getTourName()).append("** còn các chỗ trống:\n");
+                    for (ConversationState.DepartureMeta dep : t.getDepartures()) {
+                        sb.append("  • ").append(formatDate(dep.getDepartureDate()))
+                          .append(": **").append(dep.getAvailableSlots()).append(" chỗ**\n");
+                    }
+                } else {
+                    for (int i = 0; i < results.size(); i++) {
+                        ConversationState.TourGroupDisplay t = results.get(i);
+                        sb.append("**Tour ").append(i + 1).append(" — ").append(t.getTourName()).append(":**\n");
+                        for (ConversationState.DepartureMeta dep : t.getDepartures()) {
+                            sb.append("  • ").append(formatDate(dep.getDepartureDate()))
+                              .append(": còn **").append(dep.getAvailableSlots()).append(" chỗ**\n");
+                        }
+                        sb.append("\n");
+                    }
+                }
+                return buildResponse(sb.toString(), sessionId, state, new ArrayList<>());
+            }
+            case ASK_PRICE -> {
+                List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
+                if (results == null || results.isEmpty()) {
+                    return buildResponse("Mình chưa biết bạn đang hỏi giá tour nào. Bạn gửi tên tour, điểm đến hoặc chọn tour 1/2/3 nếu đang xem danh sách nhé.", sessionId, state, new ArrayList<>());
+                }
+                Integer idx = intent.getResolvedTourIdx();
+                StringBuilder sb = new StringBuilder();
+                if (idx != null && idx >= 0 && idx < results.size()) {
+                    ConversationState.TourGroupDisplay t = results.get(idx);
+                    sb.append("**").append(t.getTourName()).append("** — giá từ **")
+                      .append(String.format("%,.0f", t.getAdultSalePrice().doubleValue()))
+                      .append(" VND**/người lớn");
+                } else {
+                    for (int i = 0; i < results.size(); i++) {
+                        ConversationState.TourGroupDisplay t = results.get(i);
+                        sb.append("**Tour ").append(i + 1).append(" — ").append(t.getTourName()).append(":** ")
+                          .append(String.format("%,.0f", t.getAdultSalePrice().doubleValue()))
+                          .append(" VND/người lớn\n");
+                    }
+                }
+                return buildResponse(sb.toString(), sessionId, state, new ArrayList<>());
+            }
+            case ASK_DEPARTURE_DATE -> {
+                List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
+                if (results == null || results.isEmpty()) {
+                    return buildResponse("Mình chưa có tour cụ thể để xem ngày khởi hành. Bạn gửi tên tour hoặc điểm đến muốn đi nhé.", sessionId, state, new ArrayList<>());
+                }
+                Integer idx = intent.getResolvedTourIdx();
+                StringBuilder sb = new StringBuilder();
+                if (idx != null && idx >= 0 && idx < results.size()) {
+                    ConversationState.TourGroupDisplay t = results.get(idx);
+                    sb.append("**").append(t.getTourName()).append("** có các ngày khởi hành:\n");
+                    for (ConversationState.DepartureMeta dep : t.getDepartures()) {
+                        sb.append("  • **").append(formatDate(dep.getDepartureDate())).append("**");
+                        if (dep.getAvailableSlots() != null) sb.append(" — còn ").append(dep.getAvailableSlots()).append(" chỗ");
+                        sb.append("\n");
+                    }
+                } else {
+                    for (int i = 0; i < results.size(); i++) {
+                        ConversationState.TourGroupDisplay t = results.get(i);
+                        sb.append("**Tour ").append(i + 1).append(" — ").append(t.getTourName()).append(":**\n");
+                        for (ConversationState.DepartureMeta dep : t.getDepartures()) {
+                            sb.append("  • **").append(formatDate(dep.getDepartureDate())).append("**");
+                            if (dep.getAvailableSlots() != null) sb.append(" — còn ").append(dep.getAvailableSlots()).append(" chỗ");
+                            sb.append("\n");
+                        }
+                        sb.append("\n");
+                    }
+                }
+                return buildResponse(sb.toString(), sessionId, state, new ArrayList<>());
+            }
+            default -> { return null; }
+        }
+        return null;
+    }
+
+    /**
+     * handleBookingFlow — delegates to BookingConversationService for booking/search intents.
+     */
+    private ChatMessageResponse handleBookingFlow(IntentResult intent, ChatMessageRequest request, ConversationState state) {
+        ConversationState.Stage stage = state.getStage();
+        ChatMessageRequest flowRequest = request;
+        switch (intent.getIntent()) {
+            case TOUR_SEARCH, START_LOCATION_SEARCH, CHANGE_SEARCH -> {
+                // Pre-fill params from intent
+                if (intent.getIntent() == IntentResult.Intent.CHANGE_SEARCH) {
+                    state.setSearchDestination(null);
+                    state.setSearchStartLocation(null);
+                    state.setSearchDateRange(null);
+                }
+                if (intent.getDestination() != null) {
+                    boolean collectingWithDestination = state.getStage() == ConversationState.Stage.COLLECTING_SEARCH_INFO
+                            && state.getSearchDestination() != null
+                            && state.getSearchStartLocation() == null;
+                    if (collectingWithDestination) {
+                        state.setSearchStartLocation(intent.getDestination());
+                        state.setSearchStartLocationProvided(true);
+                        flowRequest = requestWithMessage(request, "khởi hành " + intent.getDestination());
+                    } else {
+                        state.setSearchDestination(intent.getDestination());
+                    }
+                }
+                if (intent.getStartLocation() != null) {
+                    state.setSearchStartLocation(intent.getStartLocation());
+                    flowRequest = requestWithMessage(request, "khởi hành " + intent.getStartLocation());
+                }
+                if (intent.getTravelMonth() != null) state.setSearchDateRange(intent.getTravelMonth());
+                if (intent.getAdultCount() != null && intent.getAdultCount() > 0) state.setSearchAdults(intent.getAdultCount());
+                if (state.getStage() == ConversationState.Stage.IDLE
+                        || state.getStage() == ConversationState.Stage.SHOWING_SEARCH_RESULTS
+                        || state.getStage() == ConversationState.Stage.COLLECTING_SEARCH_INFO) {
+                    state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
+                }
+                return bookingService.handle(flowRequest, state);
+            }
+            case BOOKING_FLOW -> {
+                if (intent.getDestination() != null) {
+                    boolean collectingWithDestination = state.getStage() == ConversationState.Stage.COLLECTING_SEARCH_INFO
+                            && state.getSearchDestination() != null
+                            && state.getSearchStartLocation() == null;
+                    if (collectingWithDestination) {
+                        state.setSearchStartLocation(intent.getDestination());
+                        state.setSearchStartLocationProvided(true);
+                        flowRequest = requestWithMessage(request, "khởi hành " + intent.getDestination());
+                    } else {
+                        state.setSearchDestination(intent.getDestination());
+                    }
+                }
+                if (intent.getStartLocation() != null) {
+                    state.setSearchStartLocation(intent.getStartLocation());
+                    flowRequest = requestWithMessage(request, "khởi hành " + intent.getStartLocation());
+                }
+                if (intent.getTravelMonth() != null) state.setSearchDateRange(intent.getTravelMonth());
+                if (intent.getAdultCount() != null && intent.getAdultCount() > 0) state.setSearchAdults(intent.getAdultCount());
+                if (state.getStage() == ConversationState.Stage.IDLE) {
+                    state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
+                }
+                return bookingService.handle(flowRequest, state);
+            }
+            default -> {
+                // B5: only delegate to booking service for non-off-topic messages when in active stage
+                // UNKNOWN intent means off-topic → go to RAG, do NOT corrupt booking state
+                if (stage != ConversationState.Stage.IDLE
+                        && intent.getIntent() != IntentResult.Intent.UNKNOWN) {
+                    ChatMessageResponse resp = bookingService.handle(request, state);
+                    return resp; // may be null (bookingService returns null for off-topic)
+                }
+                return null;
+            }
+        }
+    }
+
+    private ChatMessageRequest requestWithMessage(ChatMessageRequest request, String message) {
+        return ChatMessageRequest.builder()
+                .message(message)
+                .sessionId(request.getSessionId())
+                .userId(request.getUserId())
+                .build();
+    }
+
+    private ChatMessageResponse buildResumeResponse(String sessionId, ConversationState state) {
+        ConversationState.Stage stage = state.getStage();
+        if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS && state.getLastSearchResults() != null && !state.getLastSearchResults().isEmpty()) {
+            StringBuilder sb = new StringBuilder("Mình nhắc lại các tour đang hiển thị:\n\n");
+            appendSearchResultsSummary(sb, state.getLastSearchResults());
+            sb.append("Bạn muốn chọn tour nào? Nhập **1**, **2** hoặc **3**.");
+            return buildResponse(sb.toString(), sessionId, state, new ArrayList<>());
+        }
+        if (stage == ConversationState.Stage.SELECTING_DEPARTURE) {
+            ConversationState.TourGroupDisplay selected = findSelectedTour(state);
+            if (selected != null) {
+                StringBuilder sb = new StringBuilder("Bạn đang chọn ngày cho **")
+                        .append(selected.getTourName()).append("**.\n\nCác ngày khởi hành còn chỗ:\n");
+                for (ConversationState.DepartureMeta dep : selected.getDepartures()) {
+                    sb.append("- **").append(formatDate(dep.getDepartureDate())).append("**");
+                    if (dep.getAvailableSlots() != null) sb.append(" - còn ").append(dep.getAvailableSlots()).append(" chỗ");
+                    sb.append("\n");
+                }
+                sb.append("\nBạn muốn đi ngày nào?");
+                return buildResponse(sb.toString(), sessionId, state, new ArrayList<>());
+            }
+        }
+        if (stage == ConversationState.Stage.COLLECTING_PASSENGERS) {
+            return buildResponse("Bạn đang nhập thông tin hành khách. Vui lòng gửi **họ tên, giới tính** cho hành khách hiện tại.", sessionId, state, new ArrayList<>());
+        }
+        if (stage == ConversationState.Stage.COLLECTING_CONTACT_NAME_PHONE) {
+            return buildResponse("Bạn đang nhập thông tin liên hệ. Vui lòng gửi theo dạng: **Họ tên, số điện thoại**.", sessionId, state, new ArrayList<>());
+        }
+        if (stage == ConversationState.Stage.COLLECTING_CONTACT_EMAIL) {
+            return buildResponse("Bạn đang nhập email nhận xác nhận đặt tour. Vui lòng gửi địa chỉ email.", sessionId, state, new ArrayList<>());
+        }
+        if (stage == ConversationState.Stage.CONFIRMING_BOOKING) {
+            return buildResponse("Bạn đang ở bước xác nhận đặt tour. Gõ **Xác nhận** để đặt tour hoặc **Hủy** để dừng.", sessionId, state, new ArrayList<>());
+        }
+        return buildResponse("Hiện chưa có luồng đặt tour đang chờ. Bạn muốn tìm tour đi đâu?", sessionId, state, new ArrayList<>());
+    }
+
+    private ChatMessageResponse buildTourDetailAnswer(IntentResult intent, String sessionId, ConversationState state) {
+        List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
+        if (results == null || results.isEmpty()) {
+            List<ConversationState.TourGroupDisplay> found = findTourGroupsFromVectors(intent.getQueryText(), 3);
+            if (!found.isEmpty()) {
+                state.setLastSearchResults(found);
+                state.setLastMentionedTourId(found.get(0).getTourId());
+                results = found;
+            } else {
+                return buildResponse("Mình chưa xác định được tour bạn muốn xem chi tiết. Bạn gửi tên tour, mã tour hoặc điểm đến nhé.", sessionId, state, new ArrayList<>());
+            }
+        }
+
+        List<ConversationState.TourGroupDisplay> targets = resolveTargetTours(intent, state);
+        if (targets.isEmpty() && intent.getQueryText() != null) {
+            targets = findTourGroupsFromVectors(intent.getQueryText(), 3);
+            if (!targets.isEmpty()) {
+                state.setLastSearchResults(targets);
+                state.setLastMentionedTourId(targets.get(0).getTourId());
+            }
+        }
+        if (targets.isEmpty()) {
+            return buildResponse("Mình chưa tìm thấy tour khớp với thông tin bạn vừa gửi. Bạn có thể gửi lại tên tour hoặc chọn tour 1/2/3 trong danh sách hiện tại.", sessionId, state, new ArrayList<>());
+        }
+        if (targets.size() > 1 && intent.getQueryText() != null && !intent.getQueryText().isBlank()) {
+            targets = List.of(targets.get(0));
+        }
+        if (targets.size() > 1) {
+            return buildResponse("Bạn muốn xem chi tiết **tour 1**, **tour 2** hay **tour 3**?", sessionId, state, new ArrayList<>());
+        }
+
+        ConversationState.TourGroupDisplay t = targets.get(0);
+        state.setLastMentionedTourId(t.getTourId());
+        StringBuilder sb = new StringBuilder();
+        sb.append("**").append(t.getTourName()).append("**\n");
+        if (t.getDuration() != null) sb.append("- Thời lượng: ").append(t.getDuration()).append("\n");
+        if (t.getStartLocationName() != null) sb.append("- Khởi hành: ").append(t.getStartLocationName()).append("\n");
+        if (t.getAdultSalePrice() != null) sb.append("- Giá từ: **").append(String.format("%,.0f", t.getAdultSalePrice().doubleValue())).append(" VND/người lớn**\n");
+        if (t.getTourCode() != null) sb.append("- Link chi tiết: **[Xem tour](/tour/").append(t.getTourCode()).append(")**\n");
+        if (t.getDepartures() != null && !t.getDepartures().isEmpty()) {
+            sb.append("\nNgày khởi hành đang có:\n");
+            for (ConversationState.DepartureMeta dep : t.getDepartures()) {
+                sb.append("- **").append(formatDate(dep.getDepartureDate())).append("**");
+                if (dep.getAvailableSlots() != null) sb.append(" - còn ").append(dep.getAvailableSlots()).append(" chỗ");
+                sb.append("\n");
+            }
+        }
+        sb.append("\nNếu muốn đặt tour này, bạn nhập **1** hoặc tên tour nhé.");
+        return buildResponse(sb.toString(), sessionId, state, new ArrayList<>());
+    }
+
+    private List<ConversationState.TourGroupDisplay> resolveTargetTours(IntentResult intent, ConversationState state) {
+        List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
+        if (results == null || results.isEmpty()) return new ArrayList<>();
+
+        String query = normalizeText(intent.getQueryText());
+        if (!query.isBlank()) {
+            List<ConversationState.TourGroupDisplay> byName = results.stream()
+                    .filter(t -> normalizeText(t.getTourName()).contains(query) || query.contains(normalizeText(t.getTourName())))
+                    .collect(Collectors.toList());
+            if (!byName.isEmpty()) return byName;
+            // User typed a concrete tour/location name that does not match current context.
+            // Do not silently fall back to the previous tour; caller will search data again.
+            if (query.length() >= 5) return new ArrayList<>();
+        }
+
+        Integer idx = intent.getResolvedTourIdx();
+        if (idx != null && idx >= 0 && idx < results.size()) return List.of(results.get(idx));
+        if (intent.getResolvedTourId() != null) {
+            return results.stream()
+                    .filter(t -> Objects.equals(t.getTourId(), intent.getResolvedTourId()))
+                    .collect(Collectors.toList());
+        }
+        if (state.getLastMentionedTourId() != null) {
+            List<ConversationState.TourGroupDisplay> mentioned = results.stream()
+                    .filter(t -> Objects.equals(t.getTourId(), state.getLastMentionedTourId()))
+                    .collect(Collectors.toList());
+            if (!mentioned.isEmpty()) return mentioned;
+        }
+        if (results.size() == 1) return List.of(results.get(0));
+        return results;
+    }
+
+    private ChatMessageResponse buildDiscountAnswer(String userMessage, String sessionId, ConversationState state, boolean couponOnly) {
+        List<VectorDocumentDTO> docs = vectorService.searchSimilar(userMessage, 50);
+        List<VectorDocumentDTO> filtered = docs.stream()
+                .filter(d -> "TOUR_DEPARTURE".equals(d.getType()))
+                .filter(d -> {
+                    Map<String, Object> meta = parseMeta(d);
+                    if (meta.isEmpty()) return false;
+                    double sale = toDouble(meta.get("salePrice"));
+                    double original = toDouble(meta.get("originalPrice"));
+                    double coupon = toDouble(meta.get("couponDiscount"));
+                    return couponOnly ? coupon > 0 : (original > sale && sale > 0) || coupon > 0;
+                })
+                .sorted((a, b) -> Double.compare(discountValue(b, couponOnly), discountValue(a, couponOnly)))
+                .limit(12)
+                .collect(Collectors.toList());
+
+        List<ConversationState.TourGroupDisplay> groups = buildTourGroupsFromDocs(filtered, 5);
+        if (groups.isEmpty()) {
+            return buildResponse(couponOnly
+                    ? "Hiện mình chưa thấy mã coupon phù hợp trong dữ liệu đang mở bán."
+                    : "Hiện mình chưa thấy tour giảm giá phù hợp trong dữ liệu đang mở bán.",
+                    sessionId, state, new ArrayList<>());
+        }
+
+        StringBuilder sb = new StringBuilder(couponOnly
+                ? "Mình thấy các tour có coupon nổi bật:\n\n"
+                : "Mình thấy một số tour đang có ưu đãi nổi bật:\n\n");
+        for (int i = 0; i < groups.size(); i++) {
+            ConversationState.TourGroupDisplay g = groups.get(i);
+            sb.append("**").append(i + 1).append(". ").append(g.getTourName()).append("**\n");
+            if (g.getDuration() != null) sb.append("- Thời lượng: ").append(g.getDuration()).append("\n");
+            if (g.getStartLocationName() != null) sb.append("- Khởi hành: ").append(g.getStartLocationName()).append("\n");
+            if (g.getAdultSalePrice() != null) sb.append("- Giá từ: **").append(String.format("%,.0f", g.getAdultSalePrice().doubleValue())).append("đ/người lớn**\n");
+            if (g.getTourCode() != null) sb.append("- Link: **[Xem tour](/tour/").append(g.getTourCode()).append(")**\n");
+            sb.append("\n");
+        }
+        if (state.getStage() != ConversationState.Stage.IDLE) {
+            sb.append("Bạn vẫn đang ở bước **").append(state.getStage().name()).append("**. Bấm **Tiếp tục đặt tour** để quay lại luồng đang làm nhé.");
+        }
+        return buildResponse(sb.toString(), sessionId, state, List.of(
+                ChatMessageResponse.QuickAction.builder().label("Xem thêm ưu đãi").action("VIEW_DEALS").url("/tours?sort=discount").build()
+        ));
+    }
+
+    private List<ConversationState.TourGroupDisplay> findTourGroupsFromVectors(String query, int maxTours) {
+        if (query == null || query.isBlank()) return new ArrayList<>();
+        List<VectorDocumentDTO> docs = vectorService.searchSimilar(query, 30).stream()
+                .filter(d -> "TOUR_DEPARTURE".equals(d.getType()) || "TOUR_SUMMARY".equals(d.getType()))
+                .collect(Collectors.toList());
+        return buildTourGroupsFromDocs(docs, maxTours);
+    }
+
+    private List<ConversationState.TourGroupDisplay> buildTourGroupsFromDocs(List<VectorDocumentDTO> docs, int maxTours) {
+        Map<Integer, ConversationState.TourGroupDisplay> groups = new LinkedHashMap<>();
+        for (VectorDocumentDTO doc : docs) {
+            Map<String, Object> meta = parseMeta(doc);
+            Integer tourId = toInt(meta.get("tourId"));
+            if (tourId == null || groups.size() >= maxTours && !groups.containsKey(tourId)) continue;
+
+            ConversationState.TourGroupDisplay group = groups.computeIfAbsent(tourId, id ->
+                    ConversationState.TourGroupDisplay.builder()
+                            .tourId(id)
+                            .tourCode(getString(meta, "tourCode"))
+                            .tourName(getString(meta, "tourName"))
+                            .imageUrl(getString(meta, "imageUrl"))
+                            .duration(getString(meta, "duration"))
+                            .startLocationName(getString(meta, "startLocationName"))
+                            .adultSalePrice((long) toDouble(meta.get("salePrice"), meta.get("minPrice")))
+                            .departures(new ArrayList<>())
+                            .build());
+
+            if ("TOUR_DEPARTURE".equals(doc.getType())) {
+                Integer depId = toInt(meta.get("departureID"));
+                String depDate = getString(meta, "departureDate");
+                boolean exists = group.getDepartures().stream().anyMatch(d -> Objects.equals(d.getDepartureId(), depId));
+                if (!exists && depId != null) {
+                    group.getDepartures().add(ConversationState.DepartureMeta.builder()
+                            .departureId(depId)
+                            .departureDate(depDate)
+                            .availableSlots(toInt(meta.get("availableSlots")))
+                            .salePrice((long) toDouble(meta.get("salePrice")))
+                            .build());
+                }
+            }
+        }
+        return new ArrayList<>(groups.values());
+    }
+
+    private Map<String, Object> parseMeta(VectorDocumentDTO doc) {
+        try {
+            if (doc == null || doc.getMetadata() == null || doc.getMetadata().isBlank()) return Map.of();
+            Map<String, Object> meta = gson.fromJson(doc.getMetadata(), Map.class);
+            return meta == null ? Map.of() : meta;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private double discountValue(VectorDocumentDTO doc, boolean couponOnly) {
+        Map<String, Object> meta = parseMeta(doc);
+        double coupon = toDouble(meta.get("couponDiscount"));
+        if (couponOnly) return coupon;
+        double sale = toDouble(meta.get("salePrice"));
+        double original = toDouble(meta.get("originalPrice"));
+        return Math.max(0, original - sale) + coupon;
+    }
+
+    private ConversationState.TourGroupDisplay findSelectedTour(ConversationState state) {
+        if (state.getLastSearchResults() == null || state.getSelectedTourId() == null) return null;
+        return state.getLastSearchResults().stream()
+                .filter(t -> Objects.equals(t.getTourId(), state.getSelectedTourId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void appendSearchResultsSummary(StringBuilder sb, List<ConversationState.TourGroupDisplay> results) {
+        for (int i = 0; i < results.size(); i++) {
+            ConversationState.TourGroupDisplay t = results.get(i);
+            sb.append("**Tour ").append(i + 1).append(" - ").append(t.getTourName()).append("**");
+            if (t.getAdultSalePrice() != null) {
+                sb.append(" - ").append(String.format("%,.0f", t.getAdultSalePrice().doubleValue())).append(" VND");
+            }
+            sb.append("\n");
+        }
+        sb.append("\n");
+    }
+
+    /** Build booking context block to inject into RAG prompt when session is active */
+    private String buildBookingContextBlock(ConversationState state) {
+        if (state.getStage() == ConversationState.Stage.IDLE) return "";
+        if (state.getLastSearchResults() == null || state.getLastSearchResults().isEmpty()) return "";
+        StringBuilder sb = new StringBuilder("=== PHIÊN ĐẶT TOUR ĐANG HOẠT ĐỘNG ===\n");
+        sb.append("Trạng thái: ").append(state.getStage().name()).append("\n");
+        if (state.getSelectedTourName() != null) {
+            sb.append("Tour đang chọn: ").append(state.getSelectedTourName()).append("\n");
+        }
+        if (state.getDepartureDateDisplay() != null) {
+            sb.append("Ngày khởi hành: ").append(state.getDepartureDateDisplay()).append("\n");
+        }
+        if (!state.getLastSearchResults().isEmpty()) {
+            sb.append("Kết quả tìm kiếm hiện tại:\n");
+            for (int i = 0; i < state.getLastSearchResults().size(); i++) {
+                ConversationState.TourGroupDisplay t = state.getLastSearchResults().get(i);
+                sb.append("  Tour ").append(i + 1).append(": ").append(t.getTourName())
+                  .append(" — ").append(String.format("%,.0f", t.getAdultSalePrice().doubleValue()))
+                  .append(" VND | Slot: ");
+                if (!t.getDepartures().isEmpty()) {
+                    t.getDepartures().forEach(d ->
+                        sb.append(formatDate(d.getDepartureDate())).append("(").append(d.getAvailableSlots()).append(" chỗ) "));
+                }
+                sb.append("\n");
+            }
+        }
+        sb.append("======================================\n");
+        return sb.toString();
+    }
+
+    private ChatMessageResponse buildResponse(String reply, String sessionId, ConversationState state,
+                                               List<ChatMessageResponse.QuickAction> extraActions) {
+        List<ChatMessageResponse.QuickAction> actions = new ArrayList<>(extraActions);
+        if (state.getStage() != ConversationState.Stage.IDLE) {
+            actions.add(ChatMessageResponse.QuickAction.builder()
+                    .label("▶ Tiếp tục đặt tour").action("RESUME_BOOKING").build());
+            actions.add(ChatMessageResponse.QuickAction.builder()
+                    .label("✖ Hủy").action("CANCEL").build());
+        }
+        return ChatMessageResponse.builder()
+                .reply(reply).sessionId(sessionId)
+                .timestamp(java.time.LocalDateTime.now())
+                .messageType("TEXT")
+                .conversationStage(state.getStage().name())
+                .quickActions(actions)
+                .build();
+    }
+
+    private String formatDate(String raw) {
+        if (raw == null) return "";
+        try {
+            java.time.LocalDate d = java.time.LocalDate.parse(raw);
+            return d.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+        } catch (Exception e) { return raw; }
+    }
+
+    /** Build conversation history string from recentTurns for Gemini context */
+    private String buildContextWindow(ConversationState state) {
+        if (state.getRecentTurns() == null || state.getRecentTurns().isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        // Exclude last "user" turn (that's the current question)
+        List<ConversationState.ChatTurn> turns = state.getRecentTurns();
+        int limit = Math.max(0, turns.size() - 1);
+        for (int i = 0; i < limit; i++) {
+            ConversationState.ChatTurn t = turns.get(i);
+            sb.append("user".equals(t.getRole()) ? "Khách: " : "Bot: ")
+              .append(t.getContent()).append("\n");
+        }
+        return sb.toString().trim();
+    }
     // ─────────────────────────────────────────────
     // CONTEXT BUILDER
     // ─────────────────────────────────────────────
@@ -386,6 +1023,19 @@ public class ChatbotService {
             """, context, userMessage);
     }
 
+    /**
+     * buildEnhancedPromptWithHistory — giống buildEnhancedPrompt nhưng thêm lịch sử hội thoại.
+     */
+    String buildEnhancedPromptWithHistory(String userMessage, String context, String history) {
+        String historySection = (history != null && !history.isBlank())
+                ? "\n=== LỊCH SỬ HỘI THOẠI GẦN NHẤT ===\n" + history + "\n"
+                : "";
+        return buildEnhancedPrompt(userMessage, context).replace(
+                "=== DỮ LIỆU HỆ THỐNG (CONTEXT) ===",
+                historySection + "=== DỮ LIỆU HỆ THỐNG (CONTEXT) ==="
+        );
+    }
+
     // ─────────────────────────────────────────────
     // GEMINI API
     // ─────────────────────────────────────────────
@@ -525,18 +1175,27 @@ public class ChatbotService {
                     .label("📅 Khởi hành gần nhất").action("VIEW_UPCOMING").url("/tour?sort=date").build());
         }
 
-        // Default actions nếu không có context cụ thể
-        if (actions.isEmpty()) {
-            actions.add(ChatMessageResponse.QuickAction.builder()
-                    .label("Xem tour giảm giá").action("navigate").url("/tours?sort=discount").build());
-            actions.add(ChatMessageResponse.QuickAction.builder()
-                    .label("Tour miền Bắc").action("navigate").url("/tours?region=NORTH").build());
-            actions.add(ChatMessageResponse.QuickAction.builder()
-                    .label("Tour miền Nam").action("navigate").url("/tours?region=SOUTH").build());
-            actions.add(ChatMessageResponse.QuickAction.builder()
-                    .label("Xem tất cả tour").action("navigate").url("/tours").build());
-        }
         return actions;
+    }
+
+    private boolean isSupportStyleQuery(String message) {
+        String m = normalizeText(message);
+        return m.matches(".*(booking|don\\s*hang|ma\\s*booking|ma\\s*dat|thanh\\s*toan|loi|sao\\s*khong|khong\\s*xem|xem\\s*booking).*");
+    }
+
+    private boolean isTourLikeQuery(String message) {
+        String m = normalizeText(message);
+        return m.matches(".*(tour|du\\s*lich|chuyen\\s*di|di\\s*bien|di\\s*nui|nghi\\s*duong).*");
+    }
+
+    private String normalizeText(String text) {
+        if (text == null) return "";
+        return java.text.Normalizer.normalize(text.replace('đ', 'd').replace('Đ', 'D'), java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .toLowerCase()
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     // ─────────────────────────────────────────────

@@ -1,5 +1,7 @@
 package com.tourism.analytics.dto;
 
+import com.tourism.analytics.dto.chatbot.BookingConfirmData;
+import com.tourism.analytics.dto.chatbot.ChatbotBookingDetailResponse;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -16,6 +18,18 @@ public class ChatMessageResponse {
     private List<QuickAction>       quickActions;
     private String                  sessionId;
     private LocalDateTime           timestamp;
+
+    // Fields mới — chatbot stateful booking flow
+    /** TEXT | TOUR_SUGGESTIONS | BOOKING_CONFIRM | BOOKING_SUCCESS | ORDER_DETAIL */
+    private String                  messageType;
+    private String                  conversationStage;
+    private BookingConfirmData      bookingConfirmData;
+    private ChatbotBookingDetailResponse orderDetail;
+
+    // Booking success fields (cho BookingSuccessCard frontend)
+    private String                  bookingCode;
+    private String                  paymentUrl;
+    private String                  paymentWaitingLink;
 
     @Data
     @Builder
