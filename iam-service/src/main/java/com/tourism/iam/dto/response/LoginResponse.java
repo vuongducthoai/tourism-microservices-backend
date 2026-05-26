@@ -26,6 +26,7 @@ public class LoginResponse {
         private String provinceName;
         private String districtName;
         private BigDecimal coinBalance;
+        private String authProvider;  // LOCAL | GOOGLE
     }
 }
 

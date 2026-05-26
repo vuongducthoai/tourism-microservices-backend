@@ -13,7 +13,10 @@ public interface AuthService {
       LoginResponse login(LoginRequest request);
       void register(RegisterRequest request);
       void verifyEmail(String token);
+      void verifyOtp(String email, String otp);
       void resendVerificationEmail(String email);
+      void forgotPassword(String email);
+      void resetPassword(String email, String otp, String newPassword);
       TokenResponse refreshToken(RefreshTokenRequest request);
       void logout(String refreshToken);
       void logoutAll(Integer userId);
