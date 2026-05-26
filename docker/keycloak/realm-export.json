@@ -113,7 +113,7 @@
       "alias": "google",
       "displayName": "Google",
       "providerId": "google",
-      "enabled": false,
+      "enabled": true,
       "trustEmail": true,
       "firstBrokerLoginFlowAlias": "first broker login",
       "config": {

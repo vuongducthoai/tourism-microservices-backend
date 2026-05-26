@@ -16,4 +16,6 @@ public class VerificationEmailRequest {
     private String fullName;
     private String verificationToken;
     private String verificationUrl;
+    private String otpCode;        // 6-digit OTP for new flow
+    private Integer otpExpiryMinutes; // for display in email
 }

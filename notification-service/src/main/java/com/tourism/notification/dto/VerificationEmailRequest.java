@@ -18,4 +18,6 @@ public class VerificationEmailRequest implements Serializable {
     private String fullName;
     private String verificationToken;
     private String verificationUrl;
+    private String otpCode;
+    private Integer otpExpiryMinutes;
 }

@@ -104,6 +104,11 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("Vui lòng xác thực email trước khi đăng nhập");
         }
 
+        // 3b. Chặn user Google login bằng password thường
+        if (com.tourism.iam.entity.AuthProvider.GOOGLE.equals(user.getAuthProvider())) {
+            throw new RuntimeException("Tài khoản này đăng ký qua Google. Vui lòng dùng nút \"Đăng nhập với Google\"");
+        }
+
            // 4. Lazy Migration — If the user is not already in Keycloak, create a new one.
         if (Boolean.FALSE.equals(user.getMigratedToKeycloak())) {
             migrateUserToKeycloak(user, request.getPassword());
@@ -149,6 +154,7 @@ public class AuthServiceImpl implements AuthService {
                         .provinceName(user.getProvinceName())
                         .districtName(user.getDistrictName())
                         .coinBalance(user.getCoinBalance())
+                        .authProvider(user.getAuthProvider() != null ? user.getAuthProvider().name() : "LOCAL")
                         .build())
                 .build();
     }
@@ -194,6 +200,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // 3. Create user in iam_db (status=false until email verified)
+        String otpCode = generateOtp();
         User user = User.builder()
                 .fullName(request.getFullName())
                 .email(request.getEmail())
@@ -203,11 +210,13 @@ public class AuthServiceImpl implements AuthService {
                 .districtCode(request.getDistrictCode())
                 .districtName(request.getDistrictName())
                 .role(com.tourism.iam.entity.Role.CUSTOMER)
+                .authProvider(com.tourism.iam.entity.AuthProvider.LOCAL)
                 .status(false)
                 .isEmailVerified(false)
                 .migratedToKeycloak(false)
-                .verificationToken(UUID.randomUUID().toString())
-                .verificationTokenExpiry(LocalDateTime.now().plusHours(24))
+                .otpCode(otpCode)
+                .otpExpiry(LocalDateTime.now().plusMinutes(5))
+                .otpLastSentAt(LocalDateTime.now())
                 .build();
 
         userRepository.save(user);
@@ -228,21 +237,25 @@ public class AuthServiceImpl implements AuthService {
             log.error("Failed to create Keycloak user during register: {}", e.getMessage());
         }
 
-        // 5. Send verification email via notification-service
+        // 5. Send OTP email via notification-service
         try {
-            String verificationUrl = "http://localhost:3000/verify-email?token=" + user.getVerificationToken();
             notificationClient.sendVerificationEmail(
                 VerificationEmailRequest.builder()
                     .email(user.getEmail())
                     .fullName(user.getFullName())
-                    .verificationToken(user.getVerificationToken())
-                    .verificationUrl(verificationUrl)
+                    .otpCode(user.getOtpCode())
+                    .otpExpiryMinutes(5)
                     .build()
             );
-            log.info("Verification email sent to: {}", user.getEmail());
+            log.info("OTP email sent to: {}", user.getEmail());
         } catch (Exception e) {
-            log.error("Failed to send verification email for user {}: {}", user.getEmail(), e.getMessage());
+            log.error("Failed to send OTP email for user {}: {}", user.getEmail(), e.getMessage());
         }
+    }
+
+    /** Sinh OTP 6 chữ số */
+    private String generateOtp() {
+        return String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
     }
 
     @Override
@@ -271,7 +284,167 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Transactional
+    public void verifyOtp(String email, String otp) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Email không tồn tại"));
+
+        if (Boolean.TRUE.equals(user.getIsEmailVerified())) {
+            throw new RuntimeException("Tài khoản đã được xác thực");
+        }
+        if (user.getOtpCode() == null || user.getOtpExpiry() == null) {
+            throw new RuntimeException("OTP chưa được gửi. Vui lòng yêu cầu gửi lại");
+        }
+        if (user.getOtpExpiry().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("OTP đã hết hạn. Vui lòng yêu cầu gửi lại");
+        }
+        if (!user.getOtpCode().equals(otp)) {
+            throw new RuntimeException("Mã OTP không đúng");
+        }
+
+        // Verify success
+        user.setIsEmailVerified(true);
+        user.setStatus(true);
+        user.setOtpCode(null);
+        user.setOtpExpiry(null);
+        userRepository.save(user);
+
+        if (user.getKeycloakId() != null) {
+            try { keycloakAdminService.enableUser(user.getKeycloakId()); }
+            catch (Exception e) { log.warn("Failed to enable Keycloak user: {}", e.getMessage()); }
+        }
+        log.info("OTP verified for {}", email);
+    }
+
+    @Override
     public void resendVerificationEmail(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Email không tồn tại"));
+
+        if (Boolean.TRUE.equals(user.getIsEmailVerified())) {
+            throw new RuntimeException("Email đã được xác thực");
+        }
+
+        // Cooldown 60s
+        if (user.getOtpLastSentAt() != null) {
+            long secondsAgo = java.time.Duration.between(user.getOtpLastSentAt(), LocalDateTime.now()).getSeconds();
+            if (secondsAgo < 60) {
+                throw new RuntimeException("Vui lòng đợi " + (60 - secondsAgo) + " giây trước khi yêu cầu gửi lại");
+            }
+        }
+
+        // Sinh OTP mới
+        user.setOtpCode(generateOtp());
+        user.setOtpExpiry(LocalDateTime.now().plusMinutes(5));
+        user.setOtpLastSentAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        try {
+            notificationClient.sendVerificationEmail(
+                VerificationEmailRequest.builder()
+                    .email(user.getEmail())
+                    .fullName(user.getFullName())
+                    .otpCode(user.getOtpCode())
+                    .otpExpiryMinutes(5)
+                    .build()
+            );
+            log.info("Resent OTP to: {}", email);
+        } catch (Exception e) {
+            log.error("Failed to resend OTP: {}", e.getMessage());
+            throw new RuntimeException("Không thể gửi OTP. Vui lòng thử lại sau");
+        }
+    }
+
+    // ── Forgot password: gửi OTP về email ──────────────────────────────────────
+    @Override
+    @Transactional
+    public void forgotPassword(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Email không tồn tại trong hệ thống"));
+
+        // Chặn user Google (không có password để reset)
+        if (com.tourism.iam.entity.AuthProvider.GOOGLE.equals(user.getAuthProvider())) {
+            throw new RuntimeException("Tài khoản đăng ký qua Google không thể dùng chức năng này. Vui lòng đăng nhập bằng Google");
+        }
+
+        // Cooldown 60s
+        if (user.getOtpLastSentAt() != null) {
+            long secondsAgo = java.time.Duration.between(user.getOtpLastSentAt(), LocalDateTime.now()).getSeconds();
+            if (secondsAgo < 60) {
+                throw new RuntimeException("Vui lòng đợi " + (60 - secondsAgo) + " giây trước khi yêu cầu gửi lại");
+            }
+        }
+
+        // Sinh OTP mới (dùng chung field otpCode/otpExpiry với verify email)
+        user.setOtpCode(generateOtp());
+        user.setOtpExpiry(LocalDateTime.now().plusMinutes(5));
+        user.setOtpLastSentAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        try {
+            notificationClient.sendVerificationEmail(
+                VerificationEmailRequest.builder()
+                    .email(user.getEmail())
+                    .fullName(user.getFullName())
+                    .otpCode(user.getOtpCode())
+                    .otpExpiryMinutes(5)
+                    .build()
+            );
+            log.info("Sent password reset OTP to: {}", email);
+        } catch (Exception e) {
+            log.error("Failed to send reset OTP: {}", e.getMessage());
+            throw new RuntimeException("Không thể gửi OTP. Vui lòng thử lại sau");
+        }
+    }
+
+    // ── Reset password: verify OTP + đặt password mới ──────────────────────────
+    @Override
+    @Transactional
+    public void resetPassword(String email, String otp, String newPassword) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Email không tồn tại"));
+
+        if (com.tourism.iam.entity.AuthProvider.GOOGLE.equals(user.getAuthProvider())) {
+            throw new RuntimeException("Tài khoản Google không hỗ trợ đặt lại mật khẩu");
+        }
+
+        if (user.getOtpCode() == null || user.getOtpExpiry() == null) {
+            throw new RuntimeException("OTP chưa được gửi. Vui lòng yêu cầu lại");
+        }
+        if (user.getOtpExpiry().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("OTP đã hết hạn. Vui lòng yêu cầu mã mới");
+        }
+        if (!user.getOtpCode().equals(otp)) {
+            throw new RuntimeException("Mã OTP không đúng");
+        }
+
+        // Validate password mới (basic)
+        if (newPassword == null || newPassword.length() < 8) {
+            throw new RuntimeException("Mật khẩu mới phải có ít nhất 8 ký tự");
+        }
+
+        // Update password trong iam_db
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setOtpCode(null);
+        user.setOtpExpiry(null);
+        userRepository.save(user);
+
+        // Update password trong Keycloak (nếu đã sync)
+        if (Boolean.TRUE.equals(user.getMigratedToKeycloak()) && user.getKeycloakId() != null) {
+            try {
+                keycloakAdminService.updatePassword(user.getKeycloakId(), newPassword);
+                log.info("Password updated in Keycloak for: {}", email);
+            } catch (Exception e) {
+                log.warn("Failed to update Keycloak password for {}: {}", email, e.getMessage());
+                // Không throw — local password đã update, lần sau migrate lại được
+            }
+        }
+
+        log.info("Password reset successfully for: {}", email);
+    }
+
+    /** @deprecated giữ cho backward compat, không dùng */
+    private void legacyResend(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("Email không tồn tại"));
 
@@ -408,11 +581,12 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("Google login thất bại");
         }
 
-        // 2. Decode JWT để lấy thông tin user (email, name)
+        // 2. Decode JWT để lấy thông tin user (email, name, sub)
         String accessToken = (String) tokenData.get("access_token");
         Map<String, Object> claims = decodeJwtClaims(accessToken);
         String email = (String) claims.get("email");
         String fullName = (String) claims.get("name");
+        String googleSub = (String) claims.get("sub"); // ID gốc từ Keycloak/Google
 
         // 3. Tìm hoặc tạo user trong iam_db
         User user = userRepository.findByEmail(email).orElseGet(() -> {
@@ -420,13 +594,23 @@ public class AuthServiceImpl implements AuthService {
                     .email(email)
                     .fullName(fullName != null ? fullName : email)
                     .role(Role.CUSTOMER)
-                    .password("")            
+                    .authProvider(com.tourism.iam.entity.AuthProvider.GOOGLE)
+                    .providerId(googleSub)
+                    .password("")
                     .status(true)
-                    .isEmailVerified(true)     
-                    .migratedToKeycloak(true)   
+                    .isEmailVerified(true)
+                    .migratedToKeycloak(true)
                     .build();
             return userRepository.save(newUser);
         });
+
+        // Backfill cho user cũ chưa có authProvider/providerId
+        if (user.getAuthProvider() == null) {
+            user.setAuthProvider(com.tourism.iam.entity.AuthProvider.GOOGLE);
+        }
+        if (user.getProviderId() == null && googleSub != null) {
+            user.setProviderId(googleSub);
+        }
 
         if(user.getKeycloakId() == null){
            String keycloadId = keycloakAdminService.findUserIdByEmail(email);
@@ -452,6 +636,7 @@ public class AuthServiceImpl implements AuthService {
                         .provinceName(user.getProvinceName())
                         .districtName(user.getDistrictName())
                         .coinBalance(user.getCoinBalance())
+                        .authProvider(user.getAuthProvider() != null ? user.getAuthProvider().name() : "LOCAL")
                         .build())
                 .build(); 
     }

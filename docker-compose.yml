@@ -59,9 +59,9 @@ services:
       # Cho phép HTTP, không bắt HTTPS (dev only)
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
-      # Google OAuth2 Configuration
-      GOOGLE_CLIENT_ID: "YOUR_GOOGLE_CLIENT_ID"
-      GOOGLE_CLIENT_SECRET: "YOUR_GOOGLE_CLIENT_SECRET"
+      # Google OAuth2 Configuration (đọc từ .env file)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
     ports:
       # Truy cập Admin Console: http://localhost:8180
       - "8180:8080"

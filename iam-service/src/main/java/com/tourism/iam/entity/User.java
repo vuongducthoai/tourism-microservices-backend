@@ -32,7 +32,15 @@ public class User extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private Role role;
 
-    @NotBlank
+    // Phân biệt user đăng nhập qua phương thức nào
+    @Enumerated(EnumType.STRING)
+    @Column(name = "auth_provider", nullable = false, length = 20)
+    @Builder.Default
+    private AuthProvider authProvider = AuthProvider.LOCAL;
+
+    @Column(name = "provider_id")
+    private String providerId; // sub claim từ Google (user ID bên Google)
+
     private String password;
 
     private String avatar;
@@ -65,6 +73,16 @@ public class User extends BaseEntity {
 
     @Column(name = "verification_token_expiry")
     private LocalDateTime verificationTokenExpiry;
+
+    // OTP-based email verification (6 digits)
+    @Column(name = "otp_code", length = 6)
+    private String otpCode;
+
+    @Column(name = "otp_expiry")
+    private LocalDateTime otpExpiry;
+
+    @Column(name = "otp_last_sent_at")
+    private LocalDateTime otpLastSentAt;
 
     private LocalDateTime lastActiveAt;
 

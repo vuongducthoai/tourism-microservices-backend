@@ -7,8 +7,11 @@ import com.tourism.notification.service.MailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -313,32 +316,119 @@ public class MailServiceImpl implements MailService {
             log.warn("sendVerificationEmail: no email provided");
             return;
         }
+
+        // Nếu có OTP → gửi email HTML đẹp với mã 6 số
+        if (request.getOtpCode() != null && !request.getOtpCode().isBlank()) {
+            sendOtpEmailHtml(request);
+            return;
+        }
+
+        // Fallback: link-based verification cũ
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setFrom(fromEmail);
             msg.setTo(request.getEmail());
             msg.setSubject("XÁC THỰC TÀI KHOẢN - FUTURE TRAVEL");
-
             String body = String.format(
-                "Xin chào %s,\n\n" +
-                "Cảm ơn bạn đã đăng ký tài khoản trên Future Travel.\n" +
-                "Vui lòng xác thực email của bạn bằng cách click vào link dưới đây:\n\n" +
-                "%s\n\n" +
-                "Link này có hiệu lực trong 24 giờ.\n\n" +
-                "Nếu bạn không phải người tạo tài khoản này, vui lòng bỏ qua email này.\n\n" +
-                "Trân trọng,\nFuture Travel Team",
-                nvl(request.getFullName()),
-                request.getVerificationUrl()
+                "Xin chào %s,\n\nCảm ơn bạn đã đăng ký tài khoản trên Future Travel.\n" +
+                "Vui lòng xác thực email của bạn bằng cách click vào link dưới đây:\n\n%s\n\n" +
+                "Link này có hiệu lực trong 24 giờ.\n\nTrân trọng,\nFuture Travel Team",
+                nvl(request.getFullName()), request.getVerificationUrl()
             );
-
             msg.setText(body);
             mailSender.send(msg);
-            log.info("Verification email sent to: {}", request.getEmail());
-
         } catch (Exception e) {
-            log.error("Failed to send verification email to {}: {}",
-                    request.getEmail(), e.getMessage());
+            log.error("Failed to send verification email to {}: {}", request.getEmail(), e.getMessage());
         }
+    }
+
+    /** Gửi email OTP định dạng HTML đẹp. */
+    private void sendOtpEmailHtml(VerificationEmailRequest request) {
+        try {
+            MimeMessage mime = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mime, false, "UTF-8");
+            helper.setFrom(fromEmail, "Future Travel");
+            helper.setTo(request.getEmail());
+            helper.setSubject("Mã xác thực Future Travel: " + request.getOtpCode());
+
+            int expiry = request.getOtpExpiryMinutes() != null ? request.getOtpExpiryMinutes() : 5;
+            String html = buildOtpHtml(nvl(request.getFullName()), request.getOtpCode(), expiry);
+            helper.setText(html, true);
+
+            mailSender.send(mime);
+            log.info("OTP email sent to: {}", request.getEmail());
+        } catch (MessagingException | java.io.UnsupportedEncodingException e) {
+            log.error("Failed to send OTP email to {}: {}", request.getEmail(), e.getMessage());
+        }
+    }
+
+    private String buildOtpHtml(String fullName, String otp, int expiryMinutes) {
+        // Tách 6 ký tự để hiện theo từng ô đẹp
+        StringBuilder otpBoxes = new StringBuilder();
+        for (char c : otp.toCharArray()) {
+            otpBoxes.append("<span style=\"display:inline-block;width:48px;height:60px;margin:0 4px;")
+                .append("background:#ffffff;border:2px solid #2563eb;border-radius:10px;")
+                .append("line-height:60px;font-size:28px;font-weight:800;color:#0f172a;")
+                .append("font-family:'Courier New',monospace;text-align:center;")
+                .append("box-shadow:0 2px 6px rgba(37,99,235,0.15);\">")
+                .append(c).append("</span>");
+        }
+
+        return "<!DOCTYPE html><html lang=\"vi\"><head><meta charset=\"UTF-8\"></head>" +
+            "<body style=\"margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Roboto,Arial,sans-serif;\">" +
+            "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f1f5f9;padding:32px 16px;\">" +
+            "<tr><td align=\"center\">" +
+            "<table width=\"560\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:560px;background:#fff;" +
+            "border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(15,23,42,0.08);\">" +
+
+            // Header gradient
+            "<tr><td style=\"background:linear-gradient(135deg,#3b82f6 0%,#1d4ed8 100%);padding:32px 32px 28px;text-align:center;\">" +
+            "<div style=\"display:inline-block;width:56px;height:56px;background:rgba(255,255,255,0.2);" +
+            "border-radius:14px;line-height:56px;margin-bottom:14px;font-size:28px;\">✈️</div>" +
+            "<h1 style=\"margin:0;color:#fff;font-size:22px;font-weight:800;letter-spacing:0.5px;\">FUTURE TRAVEL</h1>" +
+            "<p style=\"margin:6px 0 0 0;color:rgba(255,255,255,0.85);font-size:13px;\">Xác thực tài khoản của bạn</p>" +
+            "</td></tr>" +
+
+            // Body
+            "<tr><td style=\"padding:32px;\">" +
+            "<h2 style=\"margin:0 0 12px 0;color:#0f172a;font-size:20px;font-weight:700;\">Xin chào " + fullName + "!</h2>" +
+            "<p style=\"margin:0 0 24px 0;color:#475569;font-size:14.5px;line-height:1.6;\">" +
+            "Cảm ơn bạn đã đăng ký tài khoản tại <strong>Future Travel</strong>. " +
+            "Vui lòng nhập mã OTP dưới đây để xác thực email và kích hoạt tài khoản:" +
+            "</p>" +
+
+            // OTP box
+            "<div style=\"text-align:center;background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);" +
+            "border:1px solid #bfdbfe;border-radius:14px;padding:28px 16px;margin-bottom:24px;\">" +
+            "<div style=\"font-size:11px;font-weight:700;color:#1e3a8a;text-transform:uppercase;" +
+            "letter-spacing:1.5px;margin-bottom:14px;\">Mã xác thực OTP</div>" +
+            "<div>" + otpBoxes + "</div>" +
+            "<div style=\"margin-top:14px;color:#475569;font-size:12.5px;\">" +
+            "⏱ Mã có hiệu lực trong <strong style=\"color:#dc2626;\">" + expiryMinutes + " phút</strong>" +
+            "</div></div>" +
+
+            // Warning
+            "<div style=\"background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;" +
+            "margin-bottom:24px;color:#78350f;font-size:13px;line-height:1.5;\">" +
+            "<strong>⚠ Lưu ý bảo mật:</strong><br>" +
+            "Không chia sẻ mã OTP này với bất kỳ ai, kể cả nhân viên Future Travel. " +
+            "Nếu bạn không đăng ký tài khoản, vui lòng bỏ qua email này." +
+            "</div>" +
+
+            "<p style=\"margin:0;color:#64748b;font-size:13px;line-height:1.6;\">" +
+            "Nếu bạn gặp vấn đề, liên hệ hỗ trợ: " +
+            "<a href=\"mailto:" + adminEmail + "\" style=\"color:#2563eb;text-decoration:none;font-weight:600;\">" +
+            adminEmail + "</a></p>" +
+            "</td></tr>" +
+
+            // Footer
+            "<tr><td style=\"background:#f8fafc;padding:20px 32px;text-align:center;border-top:1px solid #e2e8f0;\">" +
+            "<p style=\"margin:0;color:#94a3b8;font-size:12px;line-height:1.5;\">" +
+            "© 2025 <strong style=\"color:#475569;\">Future Travel</strong> · Công ty TNHH Future Việt Nam<br>" +
+            "117 Lý Chính Thắng, Q.3, TP.HCM · Hotline: 1900 1234" +
+            "</p></td></tr>" +
+
+            "</table></td></tr></table></body></html>";
     }
 
     private String buildRefundAccountInfo(BookingEventDTO event) {
