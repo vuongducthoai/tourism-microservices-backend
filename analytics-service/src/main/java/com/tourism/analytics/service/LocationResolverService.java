@@ -45,6 +45,10 @@ public class LocationResolverService {
         Optional<ResolvedLocation> fromCatalog = resolveFromCatalog(normalizedText, role);
         if (fromCatalog.isPresent()) return fromCatalog;
 
+        if (shouldSkipVectorFallback(normalizedText)) {
+            return Optional.empty();
+        }
+
         return resolveFromVectors(text, normalizedText, role);
     }
 
@@ -87,6 +91,12 @@ public class LocationResolverService {
         return Optional.empty();
     }
 
+    private boolean shouldSkipVectorFallback(String normalizedText) {
+        String[] tokens = normalizedText.split("\\s+");
+        boolean hasRouteContext = normalizedText.matches(".*\\b(den|di|tu|khoi\\s*hanh|xuat\\s*phat|toi\\s*o|minh\\s*o)\\b.*");
+        return tokens.length <= 2 && !hasRouteContext;
+    }
+
     private Optional<ResolvedLocation> fromMeta(Map<String, Object> meta, String nameKey, String idKey, Role role, String normalizedText) {
         String name = stringValue(meta.get(nameKey));
         if (name.isBlank()) return Optional.empty();
@@ -97,7 +107,7 @@ public class LocationResolverService {
 
         boolean direct = containsTokenized(normalizedText, normalizedName)
                 || (!compactName.isBlank() && normalizedText.replace(" ", "").contains(compactName))
-                || (!acronym.isBlank() && containsTokenized(normalizedText, acronym));
+                || (acronym.length() >= 3 && containsTokenized(normalizedText, acronym));
 
         if (!direct) return Optional.empty();
 
@@ -134,7 +144,10 @@ public class LocationResolverService {
 
         String normalizedName = normalize(location.getName());
         addMatchKey(matchKeys, normalizedName.replace(" ", ""));
-        addMatchKey(matchKeys, acronym(normalizedName));
+        String acronym = acronym(normalizedName);
+        if (acronym.length() >= 3) {
+            addMatchKey(matchKeys, acronym);
+        }
 
         return new LocationCandidate(location.getLocationID(), location.getName(), matchKeys);
     }

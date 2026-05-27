@@ -29,6 +29,7 @@ public class ConversationState implements Serializable {
         COLLECTING_PASSENGERS,
         COLLECTING_CONTACT_NAME_PHONE,
         COLLECTING_CONTACT_EMAIL,
+        COLLECTING_NOTE_COUPON,
         CONFIRMING_BOOKING,
         BOOKING_SUCCESS,
         COLLECTING_LOOKUP_CODE
@@ -36,6 +37,7 @@ public class ConversationState implements Serializable {
 
     @Builder.Default
     private Stage stage = Stage.IDLE;
+    private Stage previousStage;
 
     // ─── Search params ───
     private String searchDestination;
@@ -81,6 +83,11 @@ public class ConversationState implements Serializable {
     private String contactName;
     private String contactPhone;
     private String contactEmail;
+    private String contactAddress;
+    private String customerNote;
+    @Builder.Default
+    private List<String> couponCodes = new ArrayList<>();
+    private Integer pointsUsed;
 
     // ─── Booking result ───
     private String bookingCode;

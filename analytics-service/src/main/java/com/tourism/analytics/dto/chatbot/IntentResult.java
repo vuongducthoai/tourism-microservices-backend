@@ -19,30 +19,30 @@ public class IntentResult {
         CANCEL,
         RESUME_BOOKING,
 
-        TOUR_SEARCH,
-        CHANGE_SEARCH,
-        START_LOCATION_SEARCH,
+        TRANSACTION_FLOW,
+        BOOKING_LOOKUP_PAYMENT,
+        TOUR_RETRIEVAL,
+        GENERAL_RAG,
 
-        BOOKING_FLOW,
-        BOOKING_LOOKUP,
-
-        ASK_DETAIL,
-        ASK_SLOT,
-        ASK_PRICE,
-        ASK_CHILD_PRICE,
-        ASK_DEPARTURE_DATE,
-        ASK_ITINERARY,
-        ASK_POLICY,
-        ASK_DISCOUNT,
-        ASK_COUPON,
-
-        PAYMENT_HELP,
-        GENERAL_TRAVEL_ADVICE,
-        SYSTEM_HELP,
         UNKNOWN
     }
 
+    public enum RetrievalTask {
+        SEARCH,
+        DETAIL,
+        SLOT,
+        PRICE,
+        CHILD_PRICE,
+        DEPARTURE_DATE,
+        ITINERARY,
+        POLICY,
+        DISCOUNT,
+        COUPON,
+        ADVICE
+    }
+
     private Intent  intent;
+    private RetrievalTask retrievalTask;
     private String  destination;
     private String  startLocation;
     private String  travelMonth;

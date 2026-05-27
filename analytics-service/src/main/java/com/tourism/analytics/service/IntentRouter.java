@@ -3,6 +3,7 @@ package com.tourism.analytics.service;
 import com.tourism.analytics.dto.chatbot.ConversationState;
 import com.tourism.analytics.dto.chatbot.IntentResult;
 import com.tourism.analytics.dto.chatbot.IntentResult.Intent;
+import com.tourism.analytics.dto.chatbot.IntentResult.RetrievalTask;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,33 +42,38 @@ public class IntentRouter {
         Matcher bkM = BK_PATTERN.matcher(msg);
         if (bkM.find()) {
             return IntentResult.builder()
-                    .intent(Intent.BOOKING_LOOKUP)
+                    .intent(Intent.BOOKING_LOOKUP_PAYMENT)
                     .bookingCode(bkM.group(1).toUpperCase())
                     .rawSource("fast-path")
                     .confidence(1.0)
                     .build();
         }
 
+        if (stage == ConversationState.Stage.COLLECTING_NOTE_COUPON
+                && norm.matches(".*(bo\\s*qua|khong|khong\\s*co|skip|tiep\\s*tuc).*")) {
+            return buildResult(Intent.TRANSACTION_FLOW, "fast-path-stage-optional", 1.0);
+        }
         if (isCancel(norm)) return buildResult(Intent.CANCEL, "fast-path", 1.0);
         if (isResume(norm)) return buildResult(Intent.RESUME_BOOKING, "fast-path", 1.0);
         if (isGreeting(norm)) return buildResult(Intent.GREETING, "fast-path", 0.98);
 
         if (stage == ConversationState.Stage.CONFIRMING_BOOKING && isConfirm(norm)) {
-            return buildResult(Intent.BOOKING_FLOW, "fast-path", 1.0);
+            return buildResult(Intent.TRANSACTION_FLOW, "fast-path", 1.0);
         }
         if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS && msg.matches("^[123]$")) {
-            return buildResult(Intent.TOUR_SEARCH, "fast-path", 1.0);
+            return buildResult(Intent.TRANSACTION_FLOW, "fast-path-stage-selection", 1.0);
         }
         if (stage == ConversationState.Stage.SELECTING_DEPARTURE && msg.matches("^[123]$")) {
-            return buildResult(Intent.BOOKING_FLOW, "fast-path", 1.0);
+            return buildResult(Intent.TRANSACTION_FLOW, "fast-path-stage-selection", 1.0);
         }
 
         if (referenceResolver.isPronounReference(msg) || referenceResolver.isContextualShortQuestion(msg)) {
             ReferenceResolverService.ResolvedContext ctx = referenceResolver.resolve(msg, state);
             if (!ctx.isAmbiguous()) {
-                Intent intent = mapResolvedIntent(ctx.resolvedIntent());
+                RetrievalTask task = mapResolvedTask(ctx.resolvedIntent());
                 return IntentResult.builder()
-                        .intent(intent != null ? intent : Intent.ASK_DETAIL)
+                        .intent(Intent.TOUR_RETRIEVAL)
+                        .retrievalTask(task != null ? task : RetrievalTask.DETAIL)
                         .resolvedTourId(ctx.tourId())
                         .resolvedDepId(ctx.departureId())
                         .rawSource("reference-resolver")
@@ -76,23 +82,24 @@ public class IntentRouter {
             }
         }
 
-        if (isAskDiscount(norm)) return buildResult(Intent.ASK_DISCOUNT, "fast-path", 0.95);
-        if (isAskCoupon(norm)) return buildResult(Intent.ASK_COUPON, "fast-path", 0.95);
-        if (isSystemHelp(norm)) return buildResult(Intent.SYSTEM_HELP, "fast-path", 0.9);
-        if (isAskSlot(norm)) return buildAskResult(Intent.ASK_SLOT, norm, state);
-        if (isAskPrice(norm)) return buildAskResult(Intent.ASK_PRICE, norm, state);
-        if (isAskDepartureDate(norm)) return buildAskResult(Intent.ASK_DEPARTURE_DATE, norm, state);
-        if (isAskDetail(norm)) return buildAskResult(Intent.ASK_DETAIL, norm, state);
-        if (isLookupIntent(norm)) return buildResult(Intent.BOOKING_LOOKUP, "fast-path", 0.95);
-        if (isPaymentHelp(norm)) return buildResult(Intent.PAYMENT_HELP, "fast-path", 0.9);
-        if (isAskItinerary(norm)) return buildAskResult(Intent.ASK_ITINERARY, norm, state);
+        if (isAskDiscount(norm)) return buildRetrievalResult(RetrievalTask.DISCOUNT, norm, state, "fast-path", 0.95);
+        if (isAskCoupon(norm)) return buildRetrievalResult(RetrievalTask.COUPON, norm, state, "fast-path", 0.95);
+        if (isSystemHelp(norm)) return buildResult(Intent.GENERAL_RAG, "fast-path", 0.9);
+        if (isAskSlot(norm)) return buildRetrievalResult(RetrievalTask.SLOT, norm, state, "fast-path", 0.9);
+        if (isAskPrice(norm)) return buildRetrievalResult(RetrievalTask.PRICE, norm, state, "fast-path", 0.9);
+        if (isAskDepartureDate(norm)) return buildRetrievalResult(RetrievalTask.DEPARTURE_DATE, norm, state, "fast-path", 0.9);
+        if (isAskDetail(norm)) return buildRetrievalResult(RetrievalTask.DETAIL, norm, state, "fast-path", 0.9);
+        if (isLookupIntent(norm)) return buildResult(Intent.BOOKING_LOOKUP_PAYMENT, "fast-path", 0.95);
+        if (isPaymentHelp(norm)) return buildResult(Intent.BOOKING_LOOKUP_PAYMENT, "fast-path-payment", 0.9);
+        if (isAskItinerary(norm)) return buildRetrievalResult(RetrievalTask.ITINERARY, norm, state, "fast-path", 0.9);
 
         // B1: guard — câu hỏi đánh giá/review/xếp hạng KHÔNG phải booking intent
-        if (isRatingOrReviewQuery(norm)) return buildResult(Intent.UNKNOWN, "fast-path-rag", 0.95);
+        if (isRatingOrReviewQuery(norm)) return buildResult(Intent.GENERAL_RAG, "fast-path-rag", 0.95);
+        if (isGeneralAdviceQuery(norm)) return buildResult(Intent.GENERAL_RAG, "fast-path-rag", 0.9);
 
         if (isBookingIntent(norm)) {
             IntentResult r = extractSearchEntities(norm);
-            r.setIntent(Intent.BOOKING_FLOW);
+            r.setIntent(Intent.TRANSACTION_FLOW);
             r.setRawSource("fast-path");
             r.setConfidence(0.9);
             return r;
@@ -100,7 +107,8 @@ public class IntentRouter {
 
         if (isStartLocationSearch(norm)) {
             IntentResult r = extractSearchEntities(norm);
-            r.setIntent(Intent.START_LOCATION_SEARCH);
+            r.setIntent(Intent.TOUR_RETRIEVAL);
+            r.setRetrievalTask(RetrievalTask.SEARCH);
             r.setRawSource("fast-path");
             r.setConfidence(0.9);
             return r;
@@ -108,7 +116,8 @@ public class IntentRouter {
 
         if (isChangeSearch(norm)) {
             IntentResult r = extractSearchEntities(norm);
-            r.setIntent(Intent.CHANGE_SEARCH);
+            r.setIntent(Intent.TOUR_RETRIEVAL);
+            r.setRetrievalTask(RetrievalTask.SEARCH);
             r.setRawSource("fast-path");
             r.setConfidence(0.85);
             return r;
@@ -116,26 +125,39 @@ public class IntentRouter {
 
         // B0: stage-aware fast-path for common booking-flow answers → avoid Gemini call
         if (stage == ConversationState.Stage.COLLECTING_SEARCH_INFO) {
-            if (isMonthInput(norm)) {
-                return buildResult(Intent.TOUR_SEARCH, "fast-path-stage", 0.88);
+            if (state.getSearchDestination() != null
+                    && state.getSearchStartLocation() == null
+                    && hasSearchLocation(norm)) {
+                IntentResult r = extractSearchEntities(norm);
+                r.setIntent(Intent.TOUR_RETRIEVAL);
+                r.setRetrievalTask(RetrievalTask.SEARCH);
+                r.setRawSource("fast-path-stage-slot");
+                r.setConfidence(0.9);
+                return r;
             }
-            if (isPeopleCountInput(norm)) {
-                return buildResult(Intent.TOUR_SEARCH, "fast-path-stage", 0.88);
+            if (isMonthInput(norm) && !isTourSearch(norm) && !hasSearchLocation(norm)) {
+                return buildRetrievalResult(RetrievalTask.SEARCH, norm, state, "fast-path-stage", 0.88);
+            }
+            if (isPeopleCountInput(norm) && !isTourSearch(norm) && !hasSearchLocation(norm)) {
+                return buildRetrievalResult(RetrievalTask.SEARCH, norm, state, "fast-path-stage", 0.88);
             }
             if (isNewDestinationInput(norm, state)) {
                 IntentResult r = extractSearchEntities(norm);
-                r.setIntent(Intent.CHANGE_SEARCH);
+                r.setIntent(Intent.TOUR_RETRIEVAL);
+                r.setRetrievalTask(RetrievalTask.SEARCH);
                 r.setRawSource("fast-path-stage");
                 r.setConfidence(0.88);
                 return r;
             }
         }
         if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS && isNumericSelection(norm)) {
-            return buildResult(Intent.TOUR_SEARCH, "fast-path-stage", 0.9);
+            return buildResult(Intent.TRANSACTION_FLOW, "fast-path-stage-selection", 0.95);
         }
 
         if (isTourSearch(norm) || hasSearchLocation(norm)) {
             IntentResult r = extractSearchEntities(norm);
+            r.setIntent(Intent.TOUR_RETRIEVAL);
+            r.setRetrievalTask(RetrievalTask.SEARCH);
             r.setRawSource("fast-path");
             r.setConfidence(0.85);
             return r;
@@ -198,25 +220,31 @@ public class IntentRouter {
     // B0: stage-aware fallback when Gemini is unavailable
     private IntentResult fallbackIntentByStage(ConversationState.Stage stage, String norm, ConversationState state) {
         if (stage == ConversationState.Stage.COLLECTING_SEARCH_INFO) {
-            // In search info collection stage, treat any input as tour search partial
-            IntentResult r = extractSearchEntities(norm);
-            r.setRawSource("stage-fallback");
-            r.setConfidence(0.65);
-            return r;
+            if (isSearchInfoAnswer(norm, state)) {
+                IntentResult r = extractSearchEntities(norm);
+                r.setRawSource("stage-fallback");
+                r.setConfidence(0.65);
+                return r;
+            }
+            return buildResult(Intent.UNKNOWN, "stage-fallback-rag", 0.35);
         }
         if (stage == ConversationState.Stage.SHOWING_SEARCH_RESULTS) {
-            return buildResult(Intent.TOUR_SEARCH, "stage-fallback", 0.65);
+            return buildResult(Intent.UNKNOWN, "stage-fallback", 0.35);
         }
         if (stage == ConversationState.Stage.SELECTING_DEPARTURE) {
-            return buildResult(Intent.TOUR_SEARCH, "stage-fallback", 0.65);
+            if (norm.matches("^[123]$") || norm.matches(".*\\d{1,2}[/\\-.]\\d{1,2}.*")) {
+                return buildResult(Intent.TRANSACTION_FLOW, "stage-fallback-date", 0.75);
+            }
+            return buildResult(Intent.UNKNOWN, "stage-fallback", 0.35);
         }
         if (stage == ConversationState.Stage.COLLECTING_PASSENGERS
                 || stage == ConversationState.Stage.COLLECTING_CONTACT_NAME_PHONE
                 || stage == ConversationState.Stage.COLLECTING_CONTACT_EMAIL
+                || stage == ConversationState.Stage.COLLECTING_NOTE_COUPON
                 || stage == ConversationState.Stage.CONFIRMING_BOOKING
                 || stage == ConversationState.Stage.BOOKING_SUCCESS
                 || stage == ConversationState.Stage.COLLECTING_LOOKUP_CODE) {
-            return buildResult(Intent.BOOKING_FLOW, "stage-fallback", 0.65);
+            return buildResult(Intent.TRANSACTION_FLOW, "stage-fallback", 0.65);
         }
         return buildResult(Intent.UNKNOWN, "fast-path", 0.3);
     }
@@ -233,9 +261,25 @@ public class IntentRouter {
                 || s.matches("^(\\d+|mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi)\\s*(nguoi|khach|person|adult).*");
     }
 
+    private boolean isSearchInfoAnswer(String s, ConversationState state) {
+        return isMonthInput(s)
+                || isPeopleCountInput(s)
+                || hasSearchLocation(s)
+                || s.matches(".*(gan\\s*nhat|som\\s*nhat|bat\\s*ky|luc\\s*nao|cuoi\\s*tuan|di\\s*tu|khoi\\s*hanh|xuat\\s*phat).*");
+    }
+
+    private boolean isGeneralAdviceQuery(String s) {
+        boolean advice = s.matches(".*(nen\\s*chuan\\s*bi|can\\s*luu\\s*y|kinh\\s*nghiem|hanh\\s*ly|an\\s*toan|"
+                + "gia\\s*dinh|tre\\s*nho|nguoi\\s*gia|di\\s*dai\\s*ngay|mua\\s*mua|thoi\\s*tiet|"
+                + "bao\\s*gom|khong\\s*bao\\s*gom|chinh\\s*sach|huy\\s*hoan|hoan\\s*tien).*");
+        boolean explicitSearch = s.matches(".*(co\\s*tour|tour\\s*(di|den|khoi\\s*hanh)|toi\\s*muon\\s*di|muon\\s*di).*");
+        return advice && !explicitSearch;
+    }
+
     // B0: numeric selection in search results  e.g. "1", "chon 2", "tour so 3"
     private boolean isNumericSelection(String s) {
-        return s.matches("^[123]$") || s.matches(".*(chon\\s*[123]|so\\s*[123]|tour\\s*[123]|option\\s*[123]).*");
+        return s.matches("^[123]$")
+                || s.matches(".*(chon\\s*[123]|so\\s*[123]|tour\\s*[123]|option\\s*[123]|tour\\s*dau|dau\\s*tien|cai\\s*dau).*");
     }
 
     // B2: detect that user is inputting a NEW destination while COLLECTING_SEARCH_INFO
@@ -258,6 +302,8 @@ public class IntentRouter {
         return s.matches(".*(tour\\s*(nao|den|di|o|tai|co|gia)|tim\\s*tour|toi\\s*muon\\s*di|muon\\s*di|"
                 + "di\\s*(du\\s*lich|tham\\s*quan|bien|nui)|co\\s*tour\\s*(nao|di|den)|goi\\s*y\\s*tour|"
                 + "tim\\s*(tour|chuyen|chuyen\\s*di)|^di\\s+[a-z].*).*")
+                || s.matches(".*\\btour\\b.+\\b(den|di)\\b.+")
+                || s.matches(".*\\b[a-z][a-z\\s]+\\b(den|di)\\b\\s+[a-z][a-z\\s]+.*")
                 || (s.matches(".*\\b(co|hoi|xem|di|den)\\b.*") && hasSearchLocation(s));
     }
 
@@ -309,7 +355,7 @@ public class IntentRouter {
         return s.matches(".*(xac\\s*nhan|confirm|dong\\s*y|ok|yes|dat\\s*ngay).*");
     }
 
-    private IntentResult buildAskResult(Intent intent, String norm, ConversationState state) {
+    private IntentResult buildRetrievalResult(RetrievalTask task, String norm, ConversationState state, String source, double confidence) {
         Integer tourIdx = null;
         if (norm.contains("tour 1") || norm.contains("cai 1") || norm.contains("cai dau") || norm.contains("so 1")) {
             tourIdx = 0;
@@ -329,16 +375,20 @@ public class IntentRouter {
         }
 
         return IntentResult.builder()
-                .intent(intent)
+                .intent(Intent.TOUR_RETRIEVAL)
+                .retrievalTask(task)
                 .resolvedTourIdx(tourIdx)
                 .queryText(extractQueryText(norm))
-                .rawSource("fast-path")
-                .confidence(0.9)
+                .rawSource(source)
+                .confidence(confidence)
                 .build();
     }
 
     private IntentResult extractSearchEntities(String norm) {
-        IntentResult r = IntentResult.builder().intent(Intent.TOUR_SEARCH).build();
+        IntentResult r = IntentResult.builder()
+                .intent(Intent.TOUR_RETRIEVAL)
+                .retrievalTask(RetrievalTask.SEARCH)
+                .build();
 
         if (norm.matches(".*(khoi\\s*hanh|xuat\\s*phat|di\\s*tu|toi\\s*o|minh\\s*o|o\\s+.+\\s+thi|tu\\s+.+).*")) {
             String start = extractLocation(norm, LocationResolverService.Role.START);
@@ -349,7 +399,7 @@ public class IntentRouter {
         if (norm.contains(" den ") || norm.startsWith("den ")) {
             String[] denParts = norm.split("\\bden\\b", 2);
             if (denParts.length == 2) {
-                String afterDen = denParts[1].trim();
+                String afterDen = stripSearchModifiers(denParts[1].trim());
                 String destFromDen = extractLocation(afterDen, LocationResolverService.Role.DESTINATION);
                 if (destFromDen == null) destFromDen = extractLocation(afterDen, LocationResolverService.Role.ANY);
                 if (destFromDen == null) destFromDen = extractFreeDestination("di " + afterDen);
@@ -358,6 +408,21 @@ public class IntentRouter {
                     String beforeDen = denParts[0].trim();
                     String startFromBefore = extractLocation(beforeDen, LocationResolverService.Role.ANY);
                     if (startFromBefore != null) r.setStartLocation(startFromBefore);
+                }
+            }
+        }
+        if (r.getDestination() == null && norm.contains(" di ")) {
+            String[] diParts = norm.split("\\bdi\\b", 2);
+            if (diParts.length == 2) {
+                String beforeDi = stripSearchModifiers(diParts[0].trim());
+                String afterDi = stripSearchModifiers(diParts[1].trim());
+                String startFromBefore = extractLocation(beforeDi, LocationResolverService.Role.ANY);
+                String destFromAfter = extractLocation(afterDi, LocationResolverService.Role.DESTINATION);
+                if (destFromAfter == null) destFromAfter = extractLocation(afterDi, LocationResolverService.Role.ANY);
+                if (destFromAfter == null) destFromAfter = extractFreeDestination("di " + afterDi);
+                if (startFromBefore != null && destFromAfter != null) {
+                    r.setStartLocation(startFromBefore);
+                    r.setDestination(destFromAfter);
                 }
             }
         }
@@ -408,21 +473,30 @@ public class IntentRouter {
         return dest;
     }
 
+    private String stripSearchModifiers(String text) {
+        if (text == null) return "";
+        return text
+                .replaceAll("\\b(thang\\s*\\d{1,2}|t\\d{1,2}|tuan\\s*sau|gan\\s*nhat|som\\s*nhat)\\b.*", "")
+                .replaceAll("\\b\\d+\\s*(nguoi\\s*lon|nguoi|khach|adult|child|tre\\s*em).*$", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
     private String extractLocation(String norm, LocationResolverService.Role role) {
         return locationResolver.resolve(norm, role)
                 .map(LocationResolverService.ResolvedLocation::name)
                 .orElse(null);
     }
 
-    private Intent mapResolvedIntent(String resolvedIntent) {
+    private RetrievalTask mapResolvedTask(String resolvedIntent) {
         if (resolvedIntent == null) return null;
         return switch (resolvedIntent) {
-            case "ASK_SLOT" -> Intent.ASK_SLOT;
-            case "ASK_PRICE" -> Intent.ASK_PRICE;
-            case "ASK_CHILD_PRICE" -> Intent.ASK_CHILD_PRICE;
-            case "ASK_DEPARTURE_DATE" -> Intent.ASK_DEPARTURE_DATE;
-            case "ASK_ITINERARY" -> Intent.ASK_ITINERARY;
-            case "ASK_POLICY" -> Intent.ASK_POLICY;
+            case "ASK_SLOT" -> RetrievalTask.SLOT;
+            case "ASK_PRICE" -> RetrievalTask.PRICE;
+            case "ASK_CHILD_PRICE" -> RetrievalTask.CHILD_PRICE;
+            case "ASK_DEPARTURE_DATE" -> RetrievalTask.DEPARTURE_DATE;
+            case "ASK_ITINERARY" -> RetrievalTask.ITINERARY;
+            case "ASK_POLICY" -> RetrievalTask.POLICY;
             default -> null;
         };
     }

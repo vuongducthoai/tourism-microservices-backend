@@ -59,8 +59,11 @@ public class BookingConversationService {
         }
 
         // Global cancel check in any active booking stage
-        if (isCancel(msg) && state.getStage() != ConversationState.Stage.IDLE) {
+        if (isCancel(msg)
+                && state.getStage() != ConversationState.Stage.IDLE
+                && state.getStage() != ConversationState.Stage.COLLECTING_NOTE_COUPON) {
             state.setStage(ConversationState.Stage.IDLE);
+            state.setPreviousStage(null);
             state.setPassengers(new ArrayList<>());
             sessionService.save(request.getSessionId(), state);
             return text("Đã hủy. Bạn cần tư vấn hay đặt tour gì khác không? 😊", request.getSessionId(), "IDLE");
@@ -74,6 +77,7 @@ public class BookingConversationService {
             case COLLECTING_PASSENGERS          -> handlePassengerInfo(msg, request.getSessionId(), state);
             case COLLECTING_CONTACT_NAME_PHONE  -> handleContactNamePhone(msg, request.getSessionId(), state);
             case COLLECTING_CONTACT_EMAIL       -> handleContactEmail(msg, request.getSessionId(), state, request.getUserId());
+            case COLLECTING_NOTE_COUPON         -> handleNoteCoupon(msg, request.getSessionId(), state);
             case CONFIRMING_BOOKING             -> handleConfirm(msg, request.getSessionId(), state, request.getUserId());
             case BOOKING_SUCCESS                -> handleAfterSuccess(msg, request.getSessionId(), state);
             case COLLECTING_LOOKUP_CODE         -> handleLookup(msg, request.getSessionId(), state);
@@ -375,6 +379,14 @@ public class BookingConversationService {
         }
 
         int idx = parseTourIndex(msg, groups);
+        String normalizedMsg = normalizeLocation(msg);
+        if (idx < 0 && normalizedMsg.matches(".*(dat\\s*tour|dat\\s*chuyen|book\\s*tour|mua\\s*tour|dat\\s*(tour\\s*)?(nay|do|tren)).*")) {
+            if (groups.size() == 1) {
+                idx = 0;
+            } else {
+                return text("Bạn muốn đặt **tour nào** trong danh sách hiện tại? Nhập **1**, **2** hoặc **3** nhé.", sessionId, "SHOWING_SEARCH_RESULTS");
+            }
+        }
         boolean explicitNewSearch = normalizeLocation(msg).matches(".*(tim\\s*lai|tim\\s*tour\\s*khac|tour\\s*khac|doi\\s*sang|doi\\s*diem|di\\s*bien|di\\s*nui).*");
         if (idx < 0) {
             // Off-topic → return null, ChatbotService xử lý bằng IntentRouter/RAG
@@ -432,6 +444,7 @@ public class BookingConversationService {
 
         if (selectedTour == null) {
             state.setStage(ConversationState.Stage.IDLE);
+            state.setPreviousStage(null);
             sessionService.save(sessionId, state);
             return text("Đã hết phiên, vui lòng đặt lại từ đầu nhé! 😊", sessionId, "IDLE");
         }
@@ -526,6 +539,9 @@ public class BookingConversationService {
             if (!parsePassengerComposition(msg, state)) {
                 return text(buildPassengerCompositionPrompt(state), sessionId, "COLLECTING_PASSENGERS");
             }
+            if (state.getSearchInfants() > state.getSearchAdults()) {
+                return text("Số em bé không được nhiều hơn số người lớn đi kèm. Bạn gửi lại số lượng giúp mình nhé.", sessionId, "COLLECTING_PASSENGERS");
+            }
             int needed = state.getSearchAdults() + state.getSearchChildren() + state.getSearchToddlers();
             if (state.getAvailableSlots() != null && needed > state.getAvailableSlots()) {
                 return text("Ngày này chỉ còn **" + state.getAvailableSlots() + " chỗ**. Bạn giảm số khách hoặc chọn ngày khác nhé.", sessionId, "COLLECTING_PASSENGERS");
@@ -553,6 +569,10 @@ public class BookingConversationService {
             String gender = parts.length > 1 ? parseGender(parts[1].trim()) : "MALE";
             current.setFullName(name);
             current.setGender(gender);
+            if ("ADULT".equals(current.getType())
+                    && normalizeLocation(msg).matches(".*(phong\\s*don|single\\s*room|o\\s*1\\s*minh).*")) {
+                current.setSingleRoom(true);
+            }
             String inlineDob = null;
             for (int i = 1; i < parts.length; i++) {
                 String candidate = parseDateOfBirth(parts[i].trim());
@@ -641,17 +661,62 @@ public class BookingConversationService {
             return text("Email không hợp lệ. Vui lòng nhập lại (ví dụ: *name@gmail.com*):", sessionId, "COLLECTING_CONTACT_EMAIL");
         }
         state.setContactEmail(email);
+        state.setStage(ConversationState.Stage.COLLECTING_NOTE_COUPON);
+        sessionService.save(sessionId, state);
+        return text("""
+                ✅ Đã ghi nhận email.
+
+                Bạn có **địa chỉ liên hệ, ghi chú, mã giảm giá hoặc muốn dùng điểm** không?
+                - Nếu có, gửi ví dụ: **123 Lê Lợi, ghi chú ăn chay, mã WELCOME100K**
+                - Nếu không, nhập **bỏ qua**.
+                """, sessionId, "COLLECTING_NOTE_COUPON");
+    }
+
+    private ChatMessageResponse handleNoteCoupon(String msg, String sessionId, ConversationState state) {
+        String normalized = normalizeLocation(msg);
+        if (!normalized.matches(".*(bo\\s*qua|khong|khong\\s*co|skip|tiep\\s*tuc).*")) {
+            List<String> coupons = new ArrayList<>(state.getCouponCodes() != null ? state.getCouponCodes() : new ArrayList<>());
+            Matcher couponMatcher = Pattern.compile("(?i)\\b([A-Z][A-Z0-9]{3,19})\\b").matcher(msg);
+            while (couponMatcher.find()) {
+                String code = couponMatcher.group(1).toUpperCase(Locale.ROOT);
+                if (!coupons.contains(code)) coupons.add(code);
+            }
+            state.setCouponCodes(coupons);
+
+            Matcher pointsMatcher = Pattern.compile("(\\d+)\\s*(diem|point|xu)").matcher(normalized);
+            if (pointsMatcher.find()) {
+                state.setPointsUsed(Integer.parseInt(pointsMatcher.group(1)));
+            }
+
+            String cleaned = msg
+                    .replaceAll("(?i)\\b(mã|ma|coupon|voucher)\\s+[A-Z0-9]{4,20}\\b", " ")
+                    .replaceAll("(?i)\\b[A-Z][A-Z0-9]{3,19}\\b", " ")
+                    .replaceAll("(?i)\\d+\\s*(diem|point|xu)", " ")
+                    .replaceAll("\\s+", " ")
+                    .trim();
+            if (!cleaned.isBlank()) {
+                if (normalized.contains("ghi chu") || normalized.contains("note")) {
+                    state.setCustomerNote(cleaned);
+                } else {
+                    state.setContactAddress(cleaned);
+                }
+            }
+        }
         state.setStage(ConversationState.Stage.CONFIRMING_BOOKING);
         sessionService.save(sessionId, state);
         return buildConfirmCard(sessionId, state);
     }
 
     private ChatMessageResponse buildConfirmCard(String sessionId, ConversationState state) {
-        // Tính estimated total
+        long singleRoomTotal = state.getPassengers() == null ? 0L : state.getPassengers().stream()
+                .filter(ConversationState.PassengerData::isSingleRoom)
+                .count() * nvl(state.getSingleRoomSurcharge());
+
         long total = (long) state.getSearchAdults() * nvl(state.getAdultPrice())
                    + (long) state.getSearchChildren() * nvl(state.getChildPrice())
                    + (long) state.getSearchToddlers() * nvl(state.getToddlerPrice())
-                   + (long) state.getSearchInfants()  * nvl(state.getInfantPrice());
+                   + (long) state.getSearchInfants()  * nvl(state.getInfantPrice())
+                   + singleRoomTotal;
 
         List<BookingConfirmData.PassengerSummary> pSummaries = state.getPassengers().stream()
                 .map(p -> BookingConfirmData.PassengerSummary.builder()
@@ -673,30 +738,42 @@ public class BookingConversationService {
                 .estimatedTotal(total)
                 .build();
 
-        StringBuilder sb = new StringBuilder("📋 **XÁC NHẬN ĐẶT TOUR**\n\n");
-        sb.append("🏖️ **").append(state.getSelectedTourName()).append("**\n");
-        sb.append("📅 Khởi hành: **").append(state.getDepartureDateDisplay()).append("** | ⏱️ ").append(state.getSelectedDuration()).append("\n\n");
-        sb.append("**👥 Hành khách:**\n");
-        if (state.getSearchAdults() > 0)   sb.append("  • Người lớn × ").append(state.getSearchAdults())  .append(": ").append(fmt(state.getAdultPrice())).append("đ/người\n");
-        if (state.getSearchChildren() > 0) sb.append("  • Trẻ em × ").append(state.getSearchChildren())  .append(": ").append(fmt(state.getChildPrice())).append("đ/người\n");
-        if (state.getSearchToddlers() > 0) sb.append("  • Trẻ nhỏ × ").append(state.getSearchToddlers()) .append(": ").append(fmt(state.getToddlerPrice())).append("đ/người\n");
-        if (state.getSearchInfants() > 0)  sb.append("  • Em bé × ").append(state.getSearchInfants())    .append(": ").append(fmt(state.getInfantPrice())).append("đ/người\n");
-        sb.append("\n**👤 Liên hệ:** ").append(state.getContactName()).append(" | ").append(state.getContactPhone()).append(" | ").append(state.getContactEmail()).append("\n\n");
-        sb.append("💰 **TỔNG DỰ TÍNH: ~").append(fmt(total)).append("đ**\n");
-        sb.append("*(Giá chính xác sẽ được hệ thống xác nhận)*\n\n");
-        sb.append("⚠️ Hạn thanh toán: **24 giờ** kể từ khi đặt\n\n");
-        sb.append("Bạn có muốn **xác nhận đặt tour** không? (Gõ **Xác nhận** / **Hủy**)");
+        StringBuilder sb = new StringBuilder("**XAC NHAN DAT TOUR**\n\n");
+        sb.append("**").append(state.getSelectedTourName()).append("**\n");
+        sb.append("Khoi hanh: **").append(state.getDepartureDateDisplay()).append("** | ").append(state.getSelectedDuration()).append("\n\n");
+        sb.append("**Hanh khach:**\n");
+        if (state.getSearchAdults() > 0)   sb.append("- Nguoi lon x ").append(state.getSearchAdults())  .append(": ").append(fmt(state.getAdultPrice())).append("d/nguoi\n");
+        if (state.getSearchChildren() > 0) sb.append("- Tre em x ").append(state.getSearchChildren())  .append(": ").append(fmt(state.getChildPrice())).append("d/nguoi\n");
+        if (state.getSearchToddlers() > 0) sb.append("- Tre nho x ").append(state.getSearchToddlers()) .append(": ").append(fmt(state.getToddlerPrice())).append("d/nguoi\n");
+        if (state.getSearchInfants() > 0)  sb.append("- Em be x ").append(state.getSearchInfants())    .append(": ").append(fmt(state.getInfantPrice())).append("d/nguoi\n");
+        if (singleRoomTotal > 0) sb.append("- Phong don: ").append(fmt(singleRoomTotal)).append("d\n");
+        sb.append("\n**Lien he:** ").append(state.getContactName()).append(" | ").append(state.getContactPhone()).append(" | ").append(state.getContactEmail()).append("\n");
+        if (state.getContactAddress() != null && !state.getContactAddress().isBlank()) {
+            sb.append("**Dia chi:** ").append(state.getContactAddress()).append("\n");
+        }
+        if (state.getCustomerNote() != null && !state.getCustomerNote().isBlank()) {
+            sb.append("**Ghi chu:** ").append(state.getCustomerNote()).append("\n");
+        }
+        if (state.getCouponCodes() != null && !state.getCouponCodes().isEmpty()) {
+            sb.append("**Ma giam gia:** ").append(String.join(", ", state.getCouponCodes())).append("\n");
+        }
+        if (state.getPointsUsed() != null && state.getPointsUsed() > 0) {
+            sb.append("**Diem dung:** ").append(state.getPointsUsed()).append("\n");
+        }
+        sb.append("\n**TONG DU TINH: ~").append(fmt(total)).append("d**\n");
+        sb.append("Gia chinh xac se duoc booking-service tinh lai khi xac nhan.\n");
+        sb.append("Han thanh toan: **24 gio** ke tu khi dat.\n\n");
+        sb.append("Ban muon **xac nhan dat tour** khong? Go **xac nhan** hoac **huy**.");
 
         return ChatMessageResponse.builder()
                 .reply(sb.toString()).sessionId(sessionId).timestamp(java.time.LocalDateTime.now())
                 .messageType("BOOKING_CONFIRM").conversationStage("CONFIRMING_BOOKING")
                 .bookingConfirmData(confirmData)
                 .quickActions(List.of(
-                        ChatMessageResponse.QuickAction.builder().label("✅ Xác nhận đặt tour").action("CONFIRM_BOOKING").build(),
-                        ChatMessageResponse.QuickAction.builder().label("❌ Hủy").action("CANCEL").build()))
+                        ChatMessageResponse.QuickAction.builder().label("Xac nhan dat tour").action("CONFIRM_BOOKING").build(),
+                        ChatMessageResponse.QuickAction.builder().label("Huy").action("CANCEL").build()))
                 .build();
     }
-
     private ChatMessageResponse handleConfirm(String msg, String sessionId, ConversationState state, Integer userId) {
         if (!isConfirm(msg)) {
             return text("Bạn muốn **xác nhận** đặt tour hay **hủy**? (Gõ *Xác nhận* hoặc *Hủy*)", sessionId, "CONFIRMING_BOOKING");
@@ -719,11 +796,13 @@ public class BookingConversationService {
                 .contactFullName(state.getContactName())
                 .contactPhone(state.getContactPhone())
                 .contactEmail(state.getContactEmail())
-                .contactAddress("Đặt qua chatbot")
-                .customerNote("")
+                .contactAddress(state.getContactAddress() != null && !state.getContactAddress().isBlank()
+                        ? state.getContactAddress()
+                        : "Đặt qua chatbot")
+                .customerNote(state.getCustomerNote() != null ? state.getCustomerNote() : "")
                 .passengers(passengerReqs)
-                .couponCode(new ArrayList<>())
-                .pointsUsed(0)
+                .couponCode(state.getCouponCodes() != null ? new ArrayList<>(state.getCouponCodes()) : new ArrayList<>())
+                .pointsUsed(state.getPointsUsed() != null ? state.getPointsUsed() : 0)
                 .build();
 
         try {
@@ -807,7 +886,13 @@ public class BookingConversationService {
     private ChatMessageResponse performLookup(String code, String sessionId, ConversationState state) {
         try {
             ChatbotBookingDetailResponse detail = bookingClient.getBookingDetail(code);
-            state.setStage(ConversationState.Stage.IDLE);
+            ConversationState.Stage resumeStage = state.getPreviousStage();
+            if (resumeStage != null) {
+                state.setStage(resumeStage);
+                state.setPreviousStage(null);
+            } else {
+                state.setStage(ConversationState.Stage.IDLE);
+            }
             sessionService.save(sessionId, state);
 
             String statusVi = statusToVietnamese(detail.getStatus());
@@ -829,8 +914,13 @@ public class BookingConversationService {
 
             return ChatMessageResponse.builder()
                     .reply(sb.toString()).sessionId(sessionId).timestamp(java.time.LocalDateTime.now())
-                    .messageType("ORDER_DETAIL").conversationStage("IDLE")
-                    .orderDetail(detail).build();
+                    .messageType("ORDER_DETAIL").conversationStage(state.getStage().name())
+                    .orderDetail(detail)
+                    .quickActions(resumeStage != null ? List.of(
+                            ChatMessageResponse.QuickAction.builder().label("Tiếp tục đặt tour").action("RESUME_BOOKING").build(),
+                            ChatMessageResponse.QuickAction.builder().label("Hủy").action("CANCEL").build()
+                    ) : new ArrayList<>())
+                    .build();
 
         } catch (Exception e) {
             state.setStage(ConversationState.Stage.IDLE);
@@ -857,7 +947,7 @@ public class BookingConversationService {
     public boolean isCancel(String msg) {
         String lower = msg.toLowerCase().trim();
         if (lower.equals("huy") || lower.equals("thoi") || lower.equals("thoat") || lower.equals("cancel") || lower.equals("exit")) return true;
-        return lower.matches(".*(^|\\s)(huy|thoat|bo\\s*qua|khong\\s*dat|exit|cancel|thoi\\s*di|huy\\s*di|thoi\\s+khong)(\\s|$|[.!?]).*");
+        return lower.matches(".*(^|\\s)(thoat|bo\\s*qua|khong\\s*dat|exit|cancel|thoi\\s*di|huy\\s*di|huy\\s*tour|huy\\s*dat|thoi\\s+khong)(\\s|$|[.!?]).*");
     }
 
     private boolean isConfirm(String msg) {
@@ -1049,7 +1139,8 @@ public class BookingConversationService {
         String norm = normalizeLocation(msg);
         Matcher adultMatcher = Pattern.compile("(\\d+)\\s*(nguoi\\s*lon|nguoi|khach|adult)").matcher(norm);
         Matcher childMatcher = Pattern.compile("(\\d+)\\s*(tre\\s*em|child)").matcher(norm);
-        Matcher toddlerMatcher = Pattern.compile("(\\d+)\\s*(tre\\s*nho|em\\s*be|toddler)").matcher(norm);
+        Matcher toddlerMatcher = Pattern.compile("(\\d+)\\s*(tre\\s*nho|toddler)").matcher(norm);
+        Matcher infantMatcher = Pattern.compile("(\\d+)\\s*(em\\s*be|infant|be\\s*duoi\\s*2|duoi\\s*2\\s*tuoi)").matcher(norm);
 
         boolean found = false;
         if (adultMatcher.find()) {
@@ -1068,6 +1159,11 @@ public class BookingConversationService {
         }
         if (toddlerMatcher.find()) {
             state.setSearchToddlers(Integer.parseInt(toddlerMatcher.group(1)));
+            state.setSearchChildrenProvided(true);
+            found = true;
+        }
+        if (infantMatcher.find()) {
+            state.setSearchInfants(Integer.parseInt(infantMatcher.group(1)));
             state.setSearchChildrenProvided(true);
             found = true;
         }
