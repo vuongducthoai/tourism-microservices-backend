@@ -55,15 +55,12 @@ public class BookingConversationService {
         // ── Global BK lookup — hoạt động ở MỌI stage ──
         if (msg.matches("(?i)BK[A-Za-z0-9]{8,}")) {
             log.info("🔍 Global BK lookup at stage {}: {}", state.getStage(), msg);
-            return performLookup(msg.trim().toUpperCase(), request.getSessionId(), state);
+            return performLookup(msg.trim(), request.getSessionId(), state);
         }
 
         // Global cancel check in any active booking stage
-        if (isCancel(msg)
-                && state.getStage() != ConversationState.Stage.IDLE
-                && state.getStage() != ConversationState.Stage.COLLECTING_NOTE_COUPON) {
+        if (isCancel(msg) && state.getStage() != ConversationState.Stage.IDLE) {
             state.setStage(ConversationState.Stage.IDLE);
-            state.setPreviousStage(null);
             state.setPassengers(new ArrayList<>());
             sessionService.save(request.getSessionId(), state);
             return text("Đã hủy. Bạn cần tư vấn hay đặt tour gì khác không? 😊", request.getSessionId(), "IDLE");
@@ -77,7 +74,6 @@ public class BookingConversationService {
             case COLLECTING_PASSENGERS          -> handlePassengerInfo(msg, request.getSessionId(), state);
             case COLLECTING_CONTACT_NAME_PHONE  -> handleContactNamePhone(msg, request.getSessionId(), state);
             case COLLECTING_CONTACT_EMAIL       -> handleContactEmail(msg, request.getSessionId(), state, request.getUserId());
-            case COLLECTING_NOTE_COUPON         -> handleNoteCoupon(msg, request.getSessionId(), state);
             case CONFIRMING_BOOKING             -> handleConfirm(msg, request.getSessionId(), state, request.getUserId());
             case BOOKING_SUCCESS                -> handleAfterSuccess(msg, request.getSessionId(), state);
             case COLLECTING_LOOKUP_CODE         -> handleLookup(msg, request.getSessionId(), state);
@@ -92,12 +88,16 @@ public class BookingConversationService {
         if (isBookingIntent(msg)) {
             state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
             // Try to parse params right from first message
-            parseAndFillSearchParamsV3(msg, state);
-            ChatMessageResponse clarify = askForMissingSearchInfoIfNeededV3(sessionId, state);
+            parseAndFillSearchParamsV2(msg, state);
+            ChatMessageResponse clarify = askForMissingSearchInfoIfNeeded(sessionId, state);
             if (clarify != null) {
                 return clarify;
             }
             if (hasEnoughSearchParams(state)) {
+                return doSearch(sessionId, state);
+            }
+            // B4: if destination is present, search immediately even without all params
+            if (state.getSearchDestination() != null && !state.getSearchDestination().isBlank()) {
                 return doSearch(sessionId, state);
             }
             sessionService.save(sessionId, state);
@@ -123,41 +123,59 @@ public class BookingConversationService {
     }
 
     private ChatMessageResponse handleSearchInfo(String msg, String sessionId, ConversationState state) {
-        parseAndFillSearchParamsV3(msg, state);
-        ChatMessageResponse clarify = askForMissingSearchInfoIfNeededV3(sessionId, state);
+        // B2: track destination before parse to detect changes
+        String prevDestination = state.getSearchDestination();
+
+        parseAndFillSearchParamsV2(msg, state);
+
+        // B2: if destination changed, clear cached search results from previous query
+        String newDestination = state.getSearchDestination();
+        if (prevDestination != null && newDestination != null && !prevDestination.equalsIgnoreCase(newDestination)) {
+            log.info("Destination changed: {} → {}. Clearing cached search results.", prevDestination, newDestination);
+            state.setLastSearchResults(null);
+            state.setLastDepartures(null);
+            state.setLastMentionedTourId(null);
+        }
+
+        ChatMessageResponse clarify = askForMissingSearchInfoIfNeeded(sessionId, state);
         if (clarify != null) {
             return clarify;
         }
         if (!hasEnoughSearchParams(state)) {
+            // B4: if destination is present, search immediately even without full params
+            if (state.getSearchDestination() != null && !state.getSearchDestination().isBlank()) {
+                return doSearch(sessionId, state);
+            }
             sessionService.save(sessionId, state);
             return text("Bạn muốn đến **đâu** và đi vào **khoảng thời gian** nào? Mấy **người lớn**? 🙂", sessionId, "COLLECTING_SEARCH_INFO");
         }
         return doSearch(sessionId, state);
-    }    private ChatMessageResponse askForMissingSearchInfoIfNeededV3(String sessionId, ConversationState state) {
+    }
+
+    private ChatMessageResponse askForMissingSearchInfoIfNeeded(String sessionId, ConversationState state) {
         if (state.getSearchDestination() == null || state.getSearchDestination().isBlank()) return null;
         boolean hasStart = state.getSearchStartLocation() != null && !state.getSearchStartLocation().isBlank();
         if (hasStart && state.isSearchDateRangeProvided() && state.isSearchAdultsProvided()) return null;
 
         if (!destinationHasAnyTour(state.getSearchDestination())) {
             String dest = state.getSearchDestination();
-            clearResultContext(state);
             state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
             state.setSearchDestination(null);
             sessionService.save(sessionId, state);
-            return text("Hiện mình chưa thấy tour **" + dest + "** đang mở bán trong hệ thống.\n\n"
-                    + "Bạn muốn đổi sang điểm đến khác, hay để mình gợi ý tour gần tương tự?",
-                    sessionId, "COLLECTING_SEARCH_INFO");
+            return text("Hiá»‡n mÃ¬nh chÆ°a tháº¥y tour **" + dest + "** Ä‘ang má»Ÿ bÃ¡n trong há»‡ thá»‘ng.\n\n"
+                    + "Báº¡n muá»‘n Ä‘á»•i sang Ä‘iá»ƒm Ä‘áº¿n khÃ¡c, hay Ä‘á»ƒ mÃ¬nh gá»£i Ã½ tour gáº§n giÃ¡ trá»‹ tÆ°Æ¡ng tá»±?", sessionId, "COLLECTING_SEARCH_INFO");
         }
 
-        StringBuilder sb = new StringBuilder("Dạ tuyệt vời, **")
+        StringBuilder sb = new StringBuilder("Dáº¡ tuyá»‡t vá»i, **")
                 .append(state.getSearchDestination())
-                .append("** là lựa chọn rất thú vị. Để mình tìm tour phù hợp nhất, bạn cho mình biết thêm:\n\n");
-        if (!hasStart) sb.append("- Khởi hành từ đâu? Ví dụ: TP. Hồ Chí Minh, Hà Nội, Đà Nẵng.\n");
-        if (!state.isSearchDateRangeProvided()) sb.append("- Dự kiến đi tháng mấy hoặc khoảng thời gian nào?\n");
-        if (!state.isSearchAdultsProvided()) sb.append("- Đi bao nhiêu người lớn? Có trẻ em hoặc em bé không?\n");
+                .append("** lÃ  lá»±a chá»n ráº¥t thÃº vá»‹ áº¡! Äá»ƒ mÃ¬nh tÃ¬m tour phÃ¹ há»£p nháº¥t, báº¡n cho mÃ¬nh biáº¿t thÃªm:\n\n");
+        if (!hasStart) sb.append("â€¢ Khá»Ÿi hÃ nh tá»« Ä‘Ã¢u áº¡? (HCM, HÃ  Ná»™i, ÄÃ  Náºµng...)\n");
+        if (!state.isSearchDateRangeProvided()) sb.append("â€¢ Dá»± kiáº¿n Ä‘i thÃ¡ng máº¥y hoáº·c khoáº£ng thá»i gian nÃ o?\n");
+        if (!state.isSearchAdultsProvided()) sb.append("â€¢ Äi bao nhiÃªu ngÆ°á»i lá»›n? CÃ³ tráº» em/em bÃ© khÃ´ng?\n");
         sessionService.save(sessionId, state);
         return text(sb.toString(), sessionId, "COLLECTING_SEARCH_INFO");
     }
+
     private boolean destinationHasAnyTour(String destination) {
         try {
             String normalizedDest = normalizeLocation(destination);
@@ -205,22 +223,22 @@ public class BookingConversationService {
                         Map<String, Object> m = gson.fromJson(d.getMetadata(), Map.class);
                         String normStart = normalizeLocation(startFilter);
                         String startLoc  = normalizeLocation(String.valueOf(m.getOrDefault("startLocationName", "")));
-                        return startLoc.contains(normStart);
+                        return startLoc.contains(normStart)
+                                || ("hcm".equals(normStart) && (startLoc.contains("ho chi minh") || startLoc.contains("sai gon") || startLoc.contains("tp ho chi minh")))
+                                || ("ha noi".equals(normStart) && startLoc.contains("ha noi"))
+                                || ("da nang".equals(normStart) && startLoc.contains("da nang"));
                     } catch (Exception e) { return true; }
                 })
                 .collect(Collectors.toList());
 
         // Không fallback tour ngẫu nhiên — báo rõ không tìm thấy
         if (departureDocs.isEmpty()) {
-            String alternativeStarts = buildAlternativeStartHint(destFilter, startFilter);
-            clearResultContext(state);
             state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
             state.setSearchDestination(null);
             state.setSearchStartLocation(null);
             sessionService.save(sessionId, state);
             String destMsg = destFilter != null ? " đến **" + destFilter + "**" : "";
             return text("Mình chưa tìm được tour nào" + destMsg + " phù hợp ở thời điểm này 😕\n\n"
-                      + alternativeStarts
                       + "Bạn thử:\n"
                       + "• Đổi điểm đến (ví dụ: **Đà Nẵng**, **Nha Trang**, **Phú Quốc**)\n"
                       + "• Thay đổi thời gian\n"
@@ -322,54 +340,6 @@ public class BookingConversationService {
                 .build();
     }
 
-    private String buildAlternativeStartHint(String destFilter, String startFilter) {
-        if (destFilter == null || destFilter.isBlank() || startFilter == null || startFilter.isBlank()) {
-            return "";
-        }
-        try {
-            String normalizedDest = normalizeLocation(destFilter);
-            String normalizedStart = normalizeLocation(startFilter);
-            Set<String> starts = new LinkedHashSet<>();
-            vectorService.searchSimilar("tour du lịch " + destFilter, 50).stream()
-                    .filter(d -> "TOUR_DEPARTURE".equals(d.getType()))
-                    .forEach(d -> {
-                        try {
-                            Map<String, Object> m = gson.fromJson(d.getMetadata(), Map.class);
-                            String endLoc = normalizeLocation(String.valueOf(m.getOrDefault("endLocationName", "")));
-                            String tourName = normalizeLocation(String.valueOf(m.getOrDefault("tourName", "")));
-                            String startName = String.valueOf(m.getOrDefault("startLocationName", "")).trim();
-                            String startNorm = normalizeLocation(startName);
-                            if ((endLoc.contains(normalizedDest) || tourName.contains(normalizedDest))
-                                    && !startName.isBlank()
-                                    && !startNorm.contains(normalizedStart)) {
-                                starts.add(startName);
-                            }
-                        } catch (Exception ignored) {}
-                    });
-            if (starts.isEmpty()) return "";
-            String joined = starts.stream().limit(4).collect(Collectors.joining(", "));
-            return "Hiện chưa có tour khởi hành từ **" + startFilter + "** đến **" + destFilter
-                    + "**, nhưng hệ thống có tour đến điểm này khởi hành từ: **" + joined + "**.\n\n";
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private void clearResultContext(ConversationState state) {
-        state.setLastSearchResults(new ArrayList<>());
-        state.setLastDepartures(new ArrayList<>());
-        state.setLastMentionedTourId(null);
-        state.setLastMentionedDepartureId(null);
-        state.setSelectedTourId(null);
-        state.setSelectedTourCode(null);
-        state.setSelectedTourName(null);
-        state.setSelectedTourImage(null);
-        state.setSelectedDuration(null);
-        state.setSelectedDepartureId(null);
-        state.setDepartureDateDisplay(null);
-        state.setDepartureDateRaw(null);
-    }
-
     private ChatMessageResponse handleTourSelection(String msg, String sessionId, ConversationState state) {
         List<ConversationState.TourGroupDisplay> groups = state.getLastSearchResults();
         if (groups == null || groups.isEmpty()) {
@@ -379,14 +349,6 @@ public class BookingConversationService {
         }
 
         int idx = parseTourIndex(msg, groups);
-        String normalizedMsg = normalizeLocation(msg);
-        if (idx < 0 && normalizedMsg.matches(".*(dat\\s*tour|dat\\s*chuyen|book\\s*tour|mua\\s*tour|dat\\s*(tour\\s*)?(nay|do|tren)).*")) {
-            if (groups.size() == 1) {
-                idx = 0;
-            } else {
-                return text("Bạn muốn đặt **tour nào** trong danh sách hiện tại? Nhập **1**, **2** hoặc **3** nhé.", sessionId, "SHOWING_SEARCH_RESULTS");
-            }
-        }
         boolean explicitNewSearch = normalizeLocation(msg).matches(".*(tim\\s*lai|tim\\s*tour\\s*khac|tour\\s*khac|doi\\s*sang|doi\\s*diem|di\\s*bien|di\\s*nui).*");
         if (idx < 0) {
             // Off-topic → return null, ChatbotService xử lý bằng IntentRouter/RAG
@@ -400,7 +362,7 @@ public class BookingConversationService {
                 state.setSearchDestination(null);
                 state.setSearchStartLocation(null);
                 state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
-                parseAndFillSearchParamsV3(msg, state);
+                parseAndFillSearchParamsV2(msg, state);
                 if (hasEnoughSearchParams(state)) return doSearch(sessionId, state);
                 sessionService.save(sessionId, state);
                 return text("Bạn muốn tìm tour đến đâu? 🗺️", sessionId, "COLLECTING_SEARCH_INFO");
@@ -431,7 +393,7 @@ public class BookingConversationService {
             if (dep.getAvailableSlots() != null) sb.append(" — còn ").append(dep.getAvailableSlots()).append(" chỗ");
             sb.append("\n");
         }
-        sb.append("\nNhập **số thứ tự** (1, 2, 3) hoặc ngày cụ thể (ví dụ: 18/06):");
+        sb.append("\nNhập ngày bạn chọn (ví dụ: 18/06):");
 
         return text(sb.toString(), sessionId, "SELECTING_DEPARTURE");
     }
@@ -444,26 +406,15 @@ public class BookingConversationService {
 
         if (selectedTour == null) {
             state.setStage(ConversationState.Stage.IDLE);
-            state.setPreviousStage(null);
             sessionService.save(sessionId, state);
             return text("Đã hết phiên, vui lòng đặt lại từ đầu nhé! 😊", sessionId, "IDLE");
         }
 
         ConversationState.DepartureMeta matched = null;
-        // Handle "1","2","3" as numbered departure selection
-        String trimmedMsg = msg.trim();
-        if (trimmedMsg.matches("^[1-3]$")) {
-            int depIdx = Integer.parseInt(trimmedMsg) - 1;
-            if (depIdx < selectedTour.getDepartures().size()) {
-                matched = selectedTour.getDepartures().get(depIdx);
-            }
-        }
-        if (matched == null) {
-            for (ConversationState.DepartureMeta dep : selectedTour.getDepartures()) {
-                if (dateMatches(msg, dep.getDepartureDate())) {
-                    matched = dep;
-                    break;
-                }
+        for (ConversationState.DepartureMeta dep : selectedTour.getDepartures()) {
+            if (dateMatches(msg, dep.getDepartureDate())) {
+                matched = dep;
+                break;
             }
         }
 
@@ -478,7 +429,7 @@ public class BookingConversationService {
                     if (dep.getAvailableSlots() != null) sb2.append(" — còn ").append(dep.getAvailableSlots()).append(" chỗ");
                     sb2.append("\n");
                 }
-                sb2.append("\nNhập **số thứ tự** (1, 2, 3) hoặc ngày (ví dụ: 18/06):");
+                sb2.append("\nNhập ngày bạ muốn chọn (ví dụ: 18/06):");
                 return text(sb2.toString(), sessionId, "SELECTING_DEPARTURE");
             }
             // Off-topic → trả null để ChatbotService chuyển sang RAG
@@ -539,93 +490,47 @@ public class BookingConversationService {
             if (!parsePassengerComposition(msg, state)) {
                 return text(buildPassengerCompositionPrompt(state), sessionId, "COLLECTING_PASSENGERS");
             }
-            if (state.getSearchInfants() > state.getSearchAdults()) {
-                return text("Số em bé không được nhiều hơn số người lớn đi kèm. Bạn gửi lại số lượng giúp mình nhé.", sessionId, "COLLECTING_PASSENGERS");
-            }
             int needed = state.getSearchAdults() + state.getSearchChildren() + state.getSearchToddlers();
             if (state.getAvailableSlots() != null && needed > state.getAvailableSlots()) {
-                return text("Ngày này chỉ còn **" + state.getAvailableSlots() + " chỗ**. Bạn giảm số khách hoặc chọn ngày khác nhé.", sessionId, "COLLECTING_PASSENGERS");
+                return text("NgÃ y nÃ y chá»‰ cÃ²n **" + state.getAvailableSlots() + " chá»—**. Báº¡n giáº£m sá»‘ khÃ¡ch hoáº·c chá»n ngÃ y khÃ¡c nhÃ©.", sessionId, "COLLECTING_PASSENGERS");
             }
             initPassengerSlotsFromCounts(state);
             sessionService.save(sessionId, state);
             ConversationState.PassengerData first = state.getPassengers().get(0);
-            return text("Đã ghi nhận **" + passengerCountSummary(state) + "**.\n\n"
-                    + "**Hành khách 1 (" + typeToVietnamese(first.getType()) + "):**\n"
-                    + "Vui lòng nhập **họ tên đầy đủ, giới tính** (ví dụ: *Nguyễn Văn A, Nam*)", sessionId, "COLLECTING_PASSENGERS");
+            return text("ÄÃ£ ghi nháº­n **" + passengerCountSummary(state) + "**.\n\n"
+                    + "**HÃ nh khÃ¡ch 1 (" + typeToVietnamese(first.getType()) + "):**\n"
+                    + "Vui lÃ²ng nháº­p **há» tÃªn Ä‘áº§y Ä‘á»§, giá»›i tÃ­nh** (vÃ­ dá»¥: *Nguyá»…n VÄƒn A, Nam*)", sessionId, "COLLECTING_PASSENGERS");
         }
         int idx = state.getCurrentPassengerIndex();
 
         if (idx >= passengers.size()) {
             // All collected — move to contact
             return moveToContact(sessionId, state);
-        }        ConversationState.PassengerData current = passengers.get(idx);
-
-        if (current.getFullName() == null || current.getFullName().isBlank()) {
-            String[] parts = msg.split(",");
-            String name = parts[0].trim();
-            if (name.length() < 2) {
-                return text("Bạn nhập giúp mình họ tên đầy đủ và giới tính của hành khách nhé. Ví dụ: **Nguyễn Văn A, Nam**", sessionId, "COLLECTING_PASSENGERS");
-            }
-            String gender = parts.length > 1 ? parseGender(parts[1].trim()) : "MALE";
-            current.setFullName(name);
-            current.setGender(gender);
-            if ("ADULT".equals(current.getType())
-                    && normalizeLocation(msg).matches(".*(phong\\s*don|single\\s*room|o\\s*1\\s*minh).*")) {
-                current.setSingleRoom(true);
-            }
-            String inlineDob = null;
-            for (int i = 1; i < parts.length; i++) {
-                String candidate = parseDateOfBirth(parts[i].trim());
-                if (candidate != null) {
-                    inlineDob = candidate;
-                    break;
-                }
-            }
-            if (inlineDob == null) {
-                inlineDob = parseDateOfBirth(msg);
-            }
-            if (inlineDob != null) {
-                current.setDateOfBirth(inlineDob);
-                passengers.set(idx, current);
-                state.setPassengers(passengers);
-                state.setCurrentPassengerIndex(idx + 1);
-                if (idx + 1 < passengers.size()) {
-                    ConversationState.PassengerData next = passengers.get(idx + 1);
-                    String typeVi = typeToVietnamese(next.getType());
-                    sessionService.save(sessionId, state);
-                    return text("Đã ghi nhận **" + name + "**.\n\n**Hành khách " + (idx + 2) + " (" + typeVi + "):**\nHọ tên đầy đủ, giới tính và ngày sinh. Ví dụ: **Trần Thị B, Nữ, 1992-05-03**", sessionId, "COLLECTING_PASSENGERS");
-                }
-                return moveToContact(sessionId, state);
-            }
-            passengers.set(idx, current);
-            state.setPassengers(passengers);
-            sessionService.save(sessionId, state);
-            return text("Đã ghi nhận **" + name + "**.\n\nBạn cho mình biết **ngày sinh** của hành khách này nhé. Ví dụ: **15/08/1995**", sessionId, "COLLECTING_PASSENGERS");
         }
 
-        if (current.getDateOfBirth() == null || current.getDateOfBirth().isBlank()) {
-            String dob = parseDateOfBirth(msg);
-            if (dob == null) {
-                return text("Ngày sinh chưa đúng định dạng. Bạn nhập theo dạng **DD/MM/YYYY** hoặc **YYYY-MM-DD** nhé.", sessionId, "COLLECTING_PASSENGERS");
-            }
-            current.setDateOfBirth(dob);
-            passengers.set(idx, current);
-            state.setPassengers(passengers);
-            state.setCurrentPassengerIndex(idx + 1);
+        ConversationState.PassengerData current = passengers.get(idx);
+        // Parse "Họ tên, Giới tính"
+        String[] parts = msg.split(",", 2);
+        String name   = parts[0].trim();
+        String gender = parts.length > 1 ? parseGender(parts[1].trim()) : "MALE";
 
-            if (idx + 1 < passengers.size()) {
-                ConversationState.PassengerData next = passengers.get(idx + 1);
-                String typeVi = typeToVietnamese(next.getType());
-                sessionService.save(sessionId, state);
-                return text("Đã ghi nhận ngày sinh.\n\n**Hành khách " + (idx + 2) + " (" + typeVi + "):**\nHọ tên đầy đủ và giới tính. Ví dụ: **Trần Thị B, Nữ**", sessionId, "COLLECTING_PASSENGERS");
-            }
-            return moveToContact(sessionId, state);
-        }
+        current.setFullName(name);
+        current.setGender(gender);
+        current.setDateOfBirth(getPlaceholderDob(current.getType()));
+        passengers.set(idx, current);
 
+        state.setPassengers(passengers);
         state.setCurrentPassengerIndex(idx + 1);
-        sessionService.save(sessionId, state);
-        return handlePassengerInfo(msg, sessionId, state);
+
+        if (idx + 1 < passengers.size()) {
+            ConversationState.PassengerData next = passengers.get(idx + 1);
+            String typeVi = typeToVietnamese(next.getType());
+            sessionService.save(sessionId, state);
+            return text("✅ Đã ghi nhận **" + name + "**.\n\n**Hành khách " + (idx + 2) + " (" + typeVi + "):**\nHọ tên đầy đủ và giới tính:", sessionId, "COLLECTING_PASSENGERS");
+        }
+        return moveToContact(sessionId, state);
     }
+
     private ChatMessageResponse moveToContact(String sessionId, ConversationState state) {
         state.setStage(ConversationState.Stage.COLLECTING_CONTACT_NAME_PHONE);
         sessionService.save(sessionId, state);
@@ -661,67 +566,21 @@ public class BookingConversationService {
             return text("Email không hợp lệ. Vui lòng nhập lại (ví dụ: *name@gmail.com*):", sessionId, "COLLECTING_CONTACT_EMAIL");
         }
         state.setContactEmail(email);
-        state.setStage(ConversationState.Stage.COLLECTING_NOTE_COUPON);
-        sessionService.save(sessionId, state);
-        return text("""
-                ✅ Đã ghi nhận email.
-
-                Bạn có **địa chỉ liên hệ, ghi chú, mã giảm giá hoặc muốn dùng điểm** không?
-                - Nếu có, gửi ví dụ: **123 Lê Lợi, ghi chú ăn chay, mã WELCOME100K**
-                - Nếu không, nhập **bỏ qua**.
-                """, sessionId, "COLLECTING_NOTE_COUPON");
-    }
-
-    private ChatMessageResponse handleNoteCoupon(String msg, String sessionId, ConversationState state) {
-        String normalized = normalizeLocation(msg);
-        if (!normalized.matches(".*(bo\\s*qua|khong|khong\\s*co|skip|tiep\\s*tuc).*")) {
-            List<String> coupons = new ArrayList<>(state.getCouponCodes() != null ? state.getCouponCodes() : new ArrayList<>());
-            Matcher couponMatcher = Pattern.compile("(?i)\\b([A-Z][A-Z0-9]{3,19})\\b").matcher(msg);
-            while (couponMatcher.find()) {
-                String code = couponMatcher.group(1).toUpperCase(Locale.ROOT);
-                if (!coupons.contains(code)) coupons.add(code);
-            }
-            state.setCouponCodes(coupons);
-
-            Matcher pointsMatcher = Pattern.compile("(\\d+)\\s*(diem|point|xu)").matcher(normalized);
-            if (pointsMatcher.find()) {
-                state.setPointsUsed(Integer.parseInt(pointsMatcher.group(1)));
-            }
-
-            String cleaned = msg
-                    .replaceAll("(?i)\\b(mã|ma|coupon|voucher)\\s+[A-Z0-9]{4,20}\\b", " ")
-                    .replaceAll("(?i)\\b[A-Z][A-Z0-9]{3,19}\\b", " ")
-                    .replaceAll("(?i)\\d+\\s*(diem|point|xu)", " ")
-                    .replaceAll("\\s+", " ")
-                    .trim();
-            if (!cleaned.isBlank()) {
-                if (normalized.contains("ghi chu") || normalized.contains("note")) {
-                    state.setCustomerNote(cleaned);
-                } else {
-                    state.setContactAddress(cleaned);
-                }
-            }
-        }
         state.setStage(ConversationState.Stage.CONFIRMING_BOOKING);
         sessionService.save(sessionId, state);
         return buildConfirmCard(sessionId, state);
     }
 
     private ChatMessageResponse buildConfirmCard(String sessionId, ConversationState state) {
-        long singleRoomTotal = state.getPassengers() == null ? 0L : state.getPassengers().stream()
-                .filter(ConversationState.PassengerData::isSingleRoom)
-                .count() * nvl(state.getSingleRoomSurcharge());
-
+        // Tính estimated total
         long total = (long) state.getSearchAdults() * nvl(state.getAdultPrice())
                    + (long) state.getSearchChildren() * nvl(state.getChildPrice())
                    + (long) state.getSearchToddlers() * nvl(state.getToddlerPrice())
-                   + (long) state.getSearchInfants()  * nvl(state.getInfantPrice())
-                   + singleRoomTotal;
+                   + (long) state.getSearchInfants()  * nvl(state.getInfantPrice());
 
         List<BookingConfirmData.PassengerSummary> pSummaries = state.getPassengers().stream()
                 .map(p -> BookingConfirmData.PassengerSummary.builder()
-                        .type(p.getType()).fullName(p.getFullName()).gender(p.getGender())
-                        .dateOfBirth(p.getDateOfBirth()).build())
+                        .type(p.getType()).fullName(p.getFullName()).gender(p.getGender()).build())
                 .collect(Collectors.toList());
 
         BookingConfirmData confirmData = BookingConfirmData.builder()
@@ -738,42 +597,30 @@ public class BookingConversationService {
                 .estimatedTotal(total)
                 .build();
 
-        StringBuilder sb = new StringBuilder("**XAC NHAN DAT TOUR**\n\n");
-        sb.append("**").append(state.getSelectedTourName()).append("**\n");
-        sb.append("Khoi hanh: **").append(state.getDepartureDateDisplay()).append("** | ").append(state.getSelectedDuration()).append("\n\n");
-        sb.append("**Hanh khach:**\n");
-        if (state.getSearchAdults() > 0)   sb.append("- Nguoi lon x ").append(state.getSearchAdults())  .append(": ").append(fmt(state.getAdultPrice())).append("d/nguoi\n");
-        if (state.getSearchChildren() > 0) sb.append("- Tre em x ").append(state.getSearchChildren())  .append(": ").append(fmt(state.getChildPrice())).append("d/nguoi\n");
-        if (state.getSearchToddlers() > 0) sb.append("- Tre nho x ").append(state.getSearchToddlers()) .append(": ").append(fmt(state.getToddlerPrice())).append("d/nguoi\n");
-        if (state.getSearchInfants() > 0)  sb.append("- Em be x ").append(state.getSearchInfants())    .append(": ").append(fmt(state.getInfantPrice())).append("d/nguoi\n");
-        if (singleRoomTotal > 0) sb.append("- Phong don: ").append(fmt(singleRoomTotal)).append("d\n");
-        sb.append("\n**Lien he:** ").append(state.getContactName()).append(" | ").append(state.getContactPhone()).append(" | ").append(state.getContactEmail()).append("\n");
-        if (state.getContactAddress() != null && !state.getContactAddress().isBlank()) {
-            sb.append("**Dia chi:** ").append(state.getContactAddress()).append("\n");
-        }
-        if (state.getCustomerNote() != null && !state.getCustomerNote().isBlank()) {
-            sb.append("**Ghi chu:** ").append(state.getCustomerNote()).append("\n");
-        }
-        if (state.getCouponCodes() != null && !state.getCouponCodes().isEmpty()) {
-            sb.append("**Ma giam gia:** ").append(String.join(", ", state.getCouponCodes())).append("\n");
-        }
-        if (state.getPointsUsed() != null && state.getPointsUsed() > 0) {
-            sb.append("**Diem dung:** ").append(state.getPointsUsed()).append("\n");
-        }
-        sb.append("\n**TONG DU TINH: ~").append(fmt(total)).append("d**\n");
-        sb.append("Gia chinh xac se duoc booking-service tinh lai khi xac nhan.\n");
-        sb.append("Han thanh toan: **24 gio** ke tu khi dat.\n\n");
-        sb.append("Ban muon **xac nhan dat tour** khong? Go **xac nhan** hoac **huy**.");
+        StringBuilder sb = new StringBuilder("📋 **XÁC NHẬN ĐẶT TOUR**\n\n");
+        sb.append("🏖️ **").append(state.getSelectedTourName()).append("**\n");
+        sb.append("📅 Khởi hành: **").append(state.getDepartureDateDisplay()).append("** | ⏱️ ").append(state.getSelectedDuration()).append("\n\n");
+        sb.append("**👥 Hành khách:**\n");
+        if (state.getSearchAdults() > 0)   sb.append("  • Người lớn × ").append(state.getSearchAdults())  .append(": ").append(fmt(state.getAdultPrice())).append("đ/người\n");
+        if (state.getSearchChildren() > 0) sb.append("  • Trẻ em × ").append(state.getSearchChildren())  .append(": ").append(fmt(state.getChildPrice())).append("đ/người\n");
+        if (state.getSearchToddlers() > 0) sb.append("  • Trẻ nhỏ × ").append(state.getSearchToddlers()) .append(": ").append(fmt(state.getToddlerPrice())).append("đ/người\n");
+        if (state.getSearchInfants() > 0)  sb.append("  • Em bé × ").append(state.getSearchInfants())    .append(": ").append(fmt(state.getInfantPrice())).append("đ/người\n");
+        sb.append("\n**👤 Liên hệ:** ").append(state.getContactName()).append(" | ").append(state.getContactPhone()).append(" | ").append(state.getContactEmail()).append("\n\n");
+        sb.append("💰 **TỔNG DỰ TÍNH: ~").append(fmt(total)).append("đ**\n");
+        sb.append("*(Giá chính xác sẽ được hệ thống xác nhận)*\n\n");
+        sb.append("⚠️ Hạn thanh toán: **24 giờ** kể từ khi đặt\n\n");
+        sb.append("Bạn có muốn **xác nhận đặt tour** không? (Gõ **Xác nhận** / **Hủy**)");
 
         return ChatMessageResponse.builder()
                 .reply(sb.toString()).sessionId(sessionId).timestamp(java.time.LocalDateTime.now())
                 .messageType("BOOKING_CONFIRM").conversationStage("CONFIRMING_BOOKING")
                 .bookingConfirmData(confirmData)
                 .quickActions(List.of(
-                        ChatMessageResponse.QuickAction.builder().label("Xac nhan dat tour").action("CONFIRM_BOOKING").build(),
-                        ChatMessageResponse.QuickAction.builder().label("Huy").action("CANCEL").build()))
+                        ChatMessageResponse.QuickAction.builder().label("✅ Xác nhận đặt tour").action("CONFIRM_BOOKING").build(),
+                        ChatMessageResponse.QuickAction.builder().label("❌ Hủy").action("CANCEL").build()))
                 .build();
     }
+
     private ChatMessageResponse handleConfirm(String msg, String sessionId, ConversationState state, Integer userId) {
         if (!isConfirm(msg)) {
             return text("Bạn muốn **xác nhận** đặt tour hay **hủy**? (Gõ *Xác nhận* hoặc *Hủy*)", sessionId, "CONFIRMING_BOOKING");
@@ -784,7 +631,7 @@ public class BookingConversationService {
                 .map(p -> ChatbotCreateBookingRequest.PassengerRequest.builder()
                         .fullName(p.getFullName() != null ? p.getFullName() : "Hành khách")
                         .gender(p.getGender() != null ? p.getGender() : "MALE")
-                        .dateOfBirth(p.getDateOfBirth())
+                        .dateOfBirth(getPlaceholderDob(p.getType()))
                         .type(p.getType())
                         .singleRoom(p.isSingleRoom())
                         .build())
@@ -796,13 +643,11 @@ public class BookingConversationService {
                 .contactFullName(state.getContactName())
                 .contactPhone(state.getContactPhone())
                 .contactEmail(state.getContactEmail())
-                .contactAddress(state.getContactAddress() != null && !state.getContactAddress().isBlank()
-                        ? state.getContactAddress()
-                        : "Đặt qua chatbot")
-                .customerNote(state.getCustomerNote() != null ? state.getCustomerNote() : "")
+                .contactAddress("Đặt qua chatbot")
+                .customerNote("")
                 .passengers(passengerReqs)
-                .couponCode(state.getCouponCodes() != null ? new ArrayList<>(state.getCouponCodes()) : new ArrayList<>())
-                .pointsUsed(state.getPointsUsed() != null ? state.getPointsUsed() : 0)
+                .couponCode(new ArrayList<>())
+                .pointsUsed(0)
                 .build();
 
         try {
@@ -879,20 +724,14 @@ public class BookingConversationService {
 
     private ChatMessageResponse handleLookup(String msg, String sessionId, ConversationState state) {
         String code = extractBookingCode(msg);
-        if (code == null) code = msg.trim().toUpperCase();
+        if (code == null) return null; // Not a booking code — let RAG handle the message
         return performLookup(code, sessionId, state);
     }
 
     private ChatMessageResponse performLookup(String code, String sessionId, ConversationState state) {
         try {
             ChatbotBookingDetailResponse detail = bookingClient.getBookingDetail(code);
-            ConversationState.Stage resumeStage = state.getPreviousStage();
-            if (resumeStage != null) {
-                state.setStage(resumeStage);
-                state.setPreviousStage(null);
-            } else {
-                state.setStage(ConversationState.Stage.IDLE);
-            }
+            state.setStage(ConversationState.Stage.IDLE);
             sessionService.save(sessionId, state);
 
             String statusVi = statusToVietnamese(detail.getStatus());
@@ -914,13 +753,8 @@ public class BookingConversationService {
 
             return ChatMessageResponse.builder()
                     .reply(sb.toString()).sessionId(sessionId).timestamp(java.time.LocalDateTime.now())
-                    .messageType("ORDER_DETAIL").conversationStage(state.getStage().name())
-                    .orderDetail(detail)
-                    .quickActions(resumeStage != null ? List.of(
-                            ChatMessageResponse.QuickAction.builder().label("Tiếp tục đặt tour").action("RESUME_BOOKING").build(),
-                            ChatMessageResponse.QuickAction.builder().label("Hủy").action("CANCEL").build()
-                    ) : new ArrayList<>())
-                    .build();
+                    .messageType("ORDER_DETAIL").conversationStage("IDLE")
+                    .orderDetail(detail).build();
 
         } catch (Exception e) {
             state.setStage(ConversationState.Stage.IDLE);
@@ -944,10 +778,16 @@ public class BookingConversationService {
                 || extractBookingCode(msg) != null;
     }
 
+
     public boolean isCancel(String msg) {
         String lower = msg.toLowerCase().trim();
-        if (lower.equals("huy") || lower.equals("thoi") || lower.equals("thoat") || lower.equals("cancel") || lower.equals("exit")) return true;
-        return lower.matches(".*(^|\\s)(thoat|bo\\s*qua|khong\\s*dat|exit|cancel|thoi\\s*di|huy\\s*di|huy\\s*tour|huy\\s*dat|thoi\\s+khong)(\\s|$|[.!?]).*");
+        // Single-word cancel
+        if (lower.equals("hủy") || lower.equals("huy") || lower.equals("thôi") || lower.equals("thoi")
+                || lower.equals("thoát") || lower.equals("thoat") || lower.equals("cancel") || lower.equals("exit")) {
+            return true;
+        }
+        // Multi-word explicit cancel phrases
+        return lower.matches(".*(hủy\\s*đặt|huy\\s*dat|hủy\\s*tour|huy\\s*tour|bỏ\\s*qua|bo\\s*qua|không\\s*đặt|khong\\s*dat|thôi\\s*đi|thoi\\s*di|hủy\\s*đi|huy\\s*di|thoát\\s*ra|thoat\\s*ra).*");
     }
 
     private boolean isConfirm(String msg) {
@@ -958,11 +798,86 @@ public class BookingConversationService {
     // ─────────────────────────────────────────────────────────────────
     // HELPERS
     // ─────────────────────────────────────────────────────────────────
-    private void parseAndFillSearchParamsV3(String msg, ConversationState state) {
-        String lower = msg.toLowerCase(Locale.ROOT);
-        String normMsg = locationResolver.normalizeText(msg);
 
-        Matcher adultMatcher = Pattern.compile("(\\d+)\\s*(người\\s*lớn|nguoi\\s*lon|adult|người|nguoi|khách|khach|pass)").matcher(lower);
+    private void parseAndFillSearchParams(String msg, ConversationState state) {
+        String lower = msg.toLowerCase();
+        // Extract adults/children keywords
+        Pattern adultP = Pattern.compile("(\\d+)\\s*(người\\s*lớn|nguoi\\s*lon|adult|người|nguoi|khách|khach|người|pass)");
+        Matcher am = adultP.matcher(lower);
+        if (am.find()) state.setSearchAdults(Integer.parseInt(am.group(1)));
+
+        Pattern childP = Pattern.compile("(\\d+)\\s*(trẻ\\s*em|tre\\s*em|child|em\\s*nhỏ|em\\s*nho)");
+        Matcher cm = childP.matcher(lower);
+        if (cm.find()) state.setSearchChildren(Integer.parseInt(cm.group(1)));
+
+        Pattern toddlerP = Pattern.compile("(\\d+)\\s*(trẻ\\s*nhỏ|tre\\s*nho|toddler|em\\s*bé|em\\s*be)");
+        Matcher tm = toddlerP.matcher(lower);
+        if (tm.find()) state.setSearchToddlers(Integer.parseInt(tm.group(1)));
+
+        // Extract destination keywords (simple: look for known destinations)
+        String[] dests = {"đà nẵng","da nang","phú quốc","phu quoc","hội an","hoi an","nha trang","hà nội","ha noi",
+                "sài gòn","sai gon","hồ chí minh","hcm","huế","hue","đà lạt","da lat","quy nhon","quy nhơn",
+                "hạ long","ha long","cần thơ","can tho","côn đảo","con dao","sa pa","sapa"};
+        for (String d : dests) {
+            if (lower.contains(d)) { state.setSearchDestination(d); break; }
+        }
+
+        // Extract start location (khởi hành từ đâu)
+        String normMsg = normalizeLocation(msg);
+        if (normMsg.matches(".*(khoi\\s*hanh\\s*(tu|o)\\s*ha\\s*noi|di\\s*tu\\s*ha\\s*noi|xuat\\s*phat.*ha\\s*noi).*")) {
+            state.setSearchStartLocation("h\u00e0 n\u1ed9i");
+        } else if (normMsg.matches(".*(khoi\\s*hanh.*hcm|khoi\\s*hanh.*ho\\s*chi\\s*minh|xuat\\s*phat.*sai\\s*gon|di\\s*tu\\s*hcm|tu\\s*hcm|tu\\s*sai\\s*gon).*")) {
+            state.setSearchStartLocation("hcm");
+        } else if (normMsg.matches(".*(khoi\\s*hanh.*da\\s*nang|tu\\s*da\\s*nang).*")) {
+            state.setSearchStartLocation("\u0111\u00e0 n\u1eb5ng");
+        }
+
+        // Normalized override: keep start location separate from destination.
+        boolean hasStartContext = normMsg.matches(".*(khoi\\s*hanh|xuat\\s*phat|di\\s*tu|toi\\s*o|minh\\s*o|tu\\s*hcm|tu\\s*sai\\s*gon).*");
+        if (hasStartContext) {
+            String destNorm = normalizeLocation(state.getSearchDestination());
+            if (destNorm.equals("hcm") || destNorm.equals("sai gon") || destNorm.equals("ho chi minh")
+                    || destNorm.equals("ha noi") || destNorm.equals("da nang")) {
+                state.setSearchDestination(null);
+            }
+        } else {
+            String[][] aliases = {
+                    {"nha trang", "nha trang", "nhatrang"},
+                    {"sa pa", "sa pa", "sapa"},
+                    {"ha long", "ha long", "halong"},
+                    {"da nang", "da nang", "danang"},
+                    {"phu quoc", "phu quoc"},
+                    {"hoi an", "hoi an"},
+                    {"da lat", "da lat", "dalat"},
+                    {"hue", "hue"},
+                    {"quy nhon", "quy nhon"},
+                    {"can tho", "can tho"},
+                    {"con dao", "con dao"},
+                    {"vung tau", "vung tau"}
+            };
+            for (String[] group : aliases) {
+                for (int i = 1; i < group.length; i++) {
+                    if (normMsg.contains(group[i])) {
+                        state.setSearchDestination(group[0]);
+                        break;
+                    }
+                }
+                if (group[0].equals(state.getSearchDestination())) break;
+            }
+        }
+
+        // Extract date range
+        if (lower.contains("tháng 6") || lower.contains("thang 6") || lower.contains("/06")) state.setSearchDateRange("2026-06");
+        else if (lower.contains("tháng 7") || lower.contains("thang 7") || lower.contains("/07")) state.setSearchDateRange("2026-07");
+        else if (lower.contains("tháng 8") || lower.contains("thang 8") || lower.contains("/08")) state.setSearchDateRange("2026-08");
+        else if (lower.contains("tuần sau") || lower.contains("tuan sau")) state.setSearchDateRange("next-week");
+    }
+
+    private void parseAndFillSearchParamsV2(String msg, ConversationState state) {
+        String lower = msg.toLowerCase();
+        String normMsg = normalizeLocation(msg);
+
+        Matcher adultMatcher = Pattern.compile("(\\d+)\\s*(ngÆ°á»i\\s*lá»›n|nguoi\\s*lon|adult|ngÆ°á»i|nguoi|khÃ¡ch|khach|pass)").matcher(lower);
         if (adultMatcher.find()) {
             state.setSearchAdults(Integer.parseInt(adultMatcher.group(1)));
             state.setSearchAdultsProvided(true);
@@ -973,7 +888,7 @@ public class BookingConversationService {
             state.setSearchAdultsProvided(true);
         }
 
-        Matcher childMatcher = Pattern.compile("(\\d+)\\s*(trẻ\\s*em|tre\\s*em|child)").matcher(lower);
+        Matcher childMatcher = Pattern.compile("(\\d+)\\s*(tráº»\\s*em|tre\\s*em|child|em\\s*nhá»|em\\s*nho)").matcher(lower);
         if (childMatcher.find()) {
             state.setSearchChildren(Integer.parseInt(childMatcher.group(1)));
             state.setSearchChildrenProvided(true);
@@ -984,62 +899,61 @@ public class BookingConversationService {
             state.setSearchChildrenProvided(true);
         }
 
-        Matcher toddlerMatcher = Pattern.compile("(\\d+)\\s*(trẻ\\s*nhỏ|tre\\s*nho|toddler|em\\s*bé|em\\s*be)").matcher(lower);
+        Matcher toddlerMatcher = Pattern.compile("(\\d+)\\s*(tráº»\\s*nhá»|tre\\s*nho|toddler|em\\s*bÃ©|em\\s*be)").matcher(lower);
         if (toddlerMatcher.find()) {
             state.setSearchToddlers(Integer.parseInt(toddlerMatcher.group(1)));
             state.setSearchChildrenProvided(true);
         }
 
-        // "X đến Y" pattern: Y is always destination (highest priority)
-        if (normMsg.contains(" den ") || normMsg.startsWith("den ")) {
-            String[] denParts = normMsg.split("\\bden\\b", 2);
-            if (denParts.length == 2) {
-                String afterDen = denParts[1].trim();
-                Optional<LocationResolverService.ResolvedLocation> destOpt =
-                        locationResolver.resolve(afterDen, LocationResolverService.Role.ANY);
-                if (destOpt.isPresent()) {
-                    state.setSearchDestination(destOpt.get().name());
-                    final String destName = destOpt.get().name();
-                    String beforeDen = denParts[0].trim();
-                    locationResolver.resolve(beforeDen, LocationResolverService.Role.ANY).ifPresent(loc -> {
-                        String cand = locationResolver.normalizeText(loc.name());
-                        String d = locationResolver.normalizeText(destName);
-                        if (!cand.equals(d)) {
-                            state.setSearchStartLocation(loc.name());
-                            state.setSearchStartLocationProvided(true);
-                        }
-                    });
-                }
-            }
-        }
-        boolean hasStartContext = normMsg.matches(".*(khoi\\s*hanh|xuat\\s*phat|di\\s*tu|toi\\s*o|minh\\s*o|o\\s+.+\\s+thi|tu\\s+.+).*");
+        String[][] aliases = {
+                {"nha trang", "nha trang", "nhatrang"},
+                {"sa pa", "sa pa", "sapa"},
+                {"ha long", "ha long", "halong"},
+                {"da nang", "da nang", "danang"},
+                {"phu quoc", "phu quoc"},
+                {"hoi an", "hoi an"},
+                {"da lat", "da lat", "dalat"},
+                {"hue", "hue"},
+                {"quy nhon", "quy nhon"},
+                {"can tho", "can tho"},
+                {"con dao", "con dao"},
+                {"vung tau", "vung tau"},
+                {"hcm", "hcm", "sai gon", "ho chi minh", "tp hcm"},
+                {"ha noi", "ha noi", "hanoi"}
+        };
+
+        boolean hasStartContext = normMsg.matches(".*(khoi\\s*hanh|xuat\\s*phat|di\\s*tu|toi\\s*o|minh\\s*o|tu\\s*hcm|tu\\s*sai\\s*gon).*");
         if (hasStartContext) {
-            locationResolver.resolve(msg, LocationResolverService.Role.START).ifPresent(location -> {
-                state.setSearchStartLocation(location.name());
+            String start = extractKnownLocation(normMsg, aliases);
+            if (start != null) {
+                state.setSearchStartLocation(start);
                 state.setSearchStartLocationProvided(true);
-            });
-        } else if (state.getSearchDestination() != null && state.getSearchStartLocation() == null) {
-            locationResolver.resolve(msg, LocationResolverService.Role.START).ifPresent(location -> {
-                String candidate = locationResolver.normalizeText(location.name());
-                String dest = locationResolver.normalizeText(state.getSearchDestination());
-                if (!candidate.equals(dest)) {
-                    state.setSearchStartLocation(location.name());
-                    state.setSearchStartLocationProvided(true);
-                }
-            });
-        } else if (state.getSearchDestination() == null) {
-            locationResolver.resolve(msg, LocationResolverService.Role.DESTINATION)
-                    .ifPresent(location -> state.setSearchDestination(location.name()));
+            }
+            String destNorm = normalizeLocation(state.getSearchDestination());
+            if (destNorm.equals("hcm") || destNorm.equals("sai gon") || destNorm.equals("ho chi minh")
+                    || destNorm.equals("ha noi") || destNorm.equals("da nang")) {
+                state.setSearchDestination(null);
+            }
+        } else if (state.getSearchDestination() != null && state.getSearchStartLocation() == null
+                && normMsg.matches("^(hcm|sai\\s*gon|ho\\s*chi\\s*minh|tp\\s*hcm|ha\\s*noi|hanoi|da\\s*nang|danang)$")) {
+            String start = extractKnownLocation(normMsg, aliases);
+            if (start != null) {
+                state.setSearchStartLocation(start);
+                state.setSearchStartLocationProvided(true);
+            }
+        } else {
+            String dest = extractKnownLocation(normMsg, aliases);
+            if (dest != null) state.setSearchDestination(dest);
         }
 
-        Matcher monthMatcher = Pattern.compile("(?:thang|tháng)\\s*(\\d{1,2})").matcher(lower);
+        Matcher monthMatcher = Pattern.compile("(?:thang|thÃ¡ng)\\s*(\\d{1,2})").matcher(lower);
         if (monthMatcher.find()) {
             int month = Integer.parseInt(monthMatcher.group(1));
             if (month >= 1 && month <= 12) {
                 state.setSearchDateRange(String.format("2027-%02d", month));
                 state.setSearchDateRangeProvided(true);
             }
-        } else if (normMsg.contains("tuan sau")) {
+        } else if (lower.contains("tuáº§n sau") || lower.contains("tuan sau")) {
             state.setSearchDateRange("next-week");
             state.setSearchDateRangeProvided(true);
         } else if (normMsg.matches(".*(gan\\s*nhat|som\\s*nhat|luc\\s*nao\\s*cung\\s*duoc|khi\\s*nao\\s*cung\\s*duoc).*")) {
@@ -1047,6 +961,16 @@ public class BookingConversationService {
             state.setSearchDateRangeProvided(true);
         }
     }
+
+    private String extractKnownLocation(String normMsg, String[][] aliases) {
+        for (String[] group : aliases) {
+            for (int i = 1; i < group.length; i++) {
+                if (normMsg.contains(group[i])) return group[0];
+            }
+        }
+        return null;
+    }
+
     private boolean hasEnoughSearchParams(ConversationState state) {
         return (state.getSearchDestination() != null && !state.getSearchDestination().isEmpty())
                 || (state.getSearchStartLocation() != null && !state.getSearchStartLocation().isEmpty());
@@ -1094,26 +1018,7 @@ public class BookingConversationService {
         Matcher m = Pattern.compile("(BK[A-Za-z0-9]{8})").matcher(msg);
         return m.find() ? m.group(1) : null;
     }
-    private String parseDateOfBirth(String msg) {
-        String clean = msg == null ? "" : msg.trim();
-        try {
-            if (clean.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                LocalDate.parse(clean);
-                return clean;
-            }
-            Matcher m = Pattern.compile("(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})").matcher(clean);
-            if (m.find()) {
-                int day = Integer.parseInt(m.group(1));
-                int month = Integer.parseInt(m.group(2));
-                int year = Integer.parseInt(m.group(3));
-                LocalDate dob = LocalDate.of(year, month, day);
-                return dob.format(RAW_FMT);
-            }
-        } catch (Exception ignored) {
-            return null;
-        }
-        return null;
-    }
+
     private String parseGender(String raw) {
         String lower = raw.toLowerCase();
         if (lower.contains("nữ") || lower.contains("nu") || lower.contains("female") || lower.contains("f")) return "FEMALE";
@@ -1121,16 +1026,25 @@ public class BookingConversationService {
         return "MALE";
     }
 
+    private String getPlaceholderDob(String type) {
+        return switch (type) {
+            case "CHILD"   -> "2015-06-01";
+            case "TODDLER" -> "2022-06-01";
+            case "INFANT"  -> "2025-01-01";
+            default        -> "1990-01-01";
+        };
+    }
+
     private String buildPassengerCompositionPrompt(ConversationState state) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Đã chọn ngày **").append(state.getDepartureDateDisplay()).append("** ✅\n\n");
-        sb.append("Bây giờ mình cần số lượng hành khách để tính giá và thu đủ thông tin.\n");
-        sb.append("Bạn đi **bao nhiêu người lớn**? Có **trẻ em/em bé** không?\n\n");
-        sb.append("Ví dụ: **2 người lớn**, hoặc **2 người lớn, 1 trẻ em**.");
+        sb.append("ÄÃ£ chá»n ngÃ y **").append(state.getDepartureDateDisplay()).append("** âœ…\n\n");
+        sb.append("BÃ¢y giá» mÃ¬nh cáº§n sá»‘ lÆ°á»£ng hÃ nh khÃ¡ch Ä‘á»ƒ tÃ­nh giÃ¡ vÃ  thu Ä‘á»§ thÃ´ng tin.\n");
+        sb.append("Báº¡n Ä‘i **bao nhiÃªu ngÆ°á»i lá»›n**? CÃ³ **tráº» em/em bÃ©** khÃ´ng?\n\n");
+        sb.append("VÃ­ dá»¥: **2 ngÆ°á»i lá»›n**, hoáº·c **2 ngÆ°á»i lá»›n, 1 tráº» em**.");
         if (state.getChildPrice() != null && state.getChildPrice() > 0) {
-            sb.append("\n\nGiá tham khảo: người lớn ")
-                    .append(fmt(state.getAdultPrice())).append("đ, trẻ em ")
-                    .append(fmt(state.getChildPrice())).append("đ.");
+            sb.append("\n\nGiÃ¡ tham kháº£o: ngÆ°á»i lá»›n ")
+                    .append(fmt(state.getAdultPrice())).append("Ä‘, tráº» em ")
+                    .append(fmt(state.getChildPrice())).append("Ä‘.");
         }
         return sb.toString();
     }
@@ -1139,8 +1053,7 @@ public class BookingConversationService {
         String norm = normalizeLocation(msg);
         Matcher adultMatcher = Pattern.compile("(\\d+)\\s*(nguoi\\s*lon|nguoi|khach|adult)").matcher(norm);
         Matcher childMatcher = Pattern.compile("(\\d+)\\s*(tre\\s*em|child)").matcher(norm);
-        Matcher toddlerMatcher = Pattern.compile("(\\d+)\\s*(tre\\s*nho|toddler)").matcher(norm);
-        Matcher infantMatcher = Pattern.compile("(\\d+)\\s*(em\\s*be|infant|be\\s*duoi\\s*2|duoi\\s*2\\s*tuoi)").matcher(norm);
+        Matcher toddlerMatcher = Pattern.compile("(\\d+)\\s*(tre\\s*nho|em\\s*be|toddler)").matcher(norm);
 
         boolean found = false;
         if (adultMatcher.find()) {
@@ -1159,11 +1072,6 @@ public class BookingConversationService {
         }
         if (toddlerMatcher.find()) {
             state.setSearchToddlers(Integer.parseInt(toddlerMatcher.group(1)));
-            state.setSearchChildrenProvided(true);
-            found = true;
-        }
-        if (infantMatcher.find()) {
-            state.setSearchInfants(Integer.parseInt(infantMatcher.group(1)));
             state.setSearchChildrenProvided(true);
             found = true;
         }
@@ -1188,10 +1096,10 @@ public class BookingConversationService {
 
     private String passengerCountSummary(ConversationState state) {
         List<String> parts = new ArrayList<>();
-        if (state.getSearchAdults() > 0) parts.add(state.getSearchAdults() + " người lớn");
-        if (state.getSearchChildren() > 0) parts.add(state.getSearchChildren() + " trẻ em");
-        if (state.getSearchToddlers() > 0) parts.add(state.getSearchToddlers() + " trẻ nhỏ");
-        if (state.getSearchInfants() > 0) parts.add(state.getSearchInfants() + " em bé");
+        if (state.getSearchAdults() > 0) parts.add(state.getSearchAdults() + " ngÆ°á»i lá»›n");
+        if (state.getSearchChildren() > 0) parts.add(state.getSearchChildren() + " tráº» em");
+        if (state.getSearchToddlers() > 0) parts.add(state.getSearchToddlers() + " tráº» nhá»");
+        if (state.getSearchInfants() > 0) parts.add(state.getSearchInfants() + " em bÃ©");
         return String.join(", ", parts);
     }
 
@@ -1243,7 +1151,7 @@ public class BookingConversationService {
     /** Chuẩn hóa tên địa điểm để so sánh: bỏ dấu, lowercase */
     private String normalizeLocation(String loc) {
         if (loc == null) return "";
-        return java.text.Normalizer.normalize(loc.replace('đ', 'd').replace('Đ', 'D'), java.text.Normalizer.Form.NFD)
+        return java.text.Normalizer.normalize(loc, java.text.Normalizer.Form.NFD)
                 .replaceAll("\\p{M}", "")
                 .toLowerCase()
                 .replaceAll("[^a-z0-9 ]", "");

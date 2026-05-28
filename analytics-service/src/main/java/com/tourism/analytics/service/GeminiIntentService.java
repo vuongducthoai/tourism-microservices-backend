@@ -50,6 +50,7 @@ public class GeminiIntentService {
         Map<String, Object> genConfig = new HashMap<>();
         genConfig.put("temperature", 0.0);
         genConfig.put("maxOutputTokens", 300);
+        genConfig.put("responseMimeType", "application/json");
 
         Map<String, Object> body = new HashMap<>();
         body.put("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
@@ -98,7 +99,7 @@ public class GeminiIntentService {
 
                 Tra loi JSON duy nhat:
                 {
-                  "intent": "GREETING|CANCEL|RESUME_BOOKING|TRANSACTION_FLOW|BOOKING_LOOKUP_PAYMENT|TOUR_RETRIEVAL|GENERAL_RAG|UNKNOWN",
+                  "intent": "GREETING|CANCEL|RESUME_BOOKING|TRANSACTION_FLOW|BOOKING_LOOKUP_PAYMENT|BOOKING_CANCEL_HELP|TOUR_RETRIEVAL|GENERAL_RAG|UNKNOWN",
                   "retrievalTask": "SEARCH|DETAIL|SLOT|PRICE|CHILD_PRICE|DEPARTURE_DATE|ITINERARY|POLICY|DISCOUNT|COUPON|ADVICE|null",
                   "destination": null,
                   "startLocation": null,
@@ -110,6 +111,7 @@ public class GeminiIntentService {
                 Rules:
                 - Dat tour, chon 1/2/3, chon ngay, nhap hanh khach/contact/email/xac nhan -> TRANSACTION_FLOW.
                 - Tra cuu booking, ma BK, thanh toan -> BOOKING_LOOKUP_PAYMENT.
+                - Huy booking/tour da dat theo ma BK -> BOOKING_CANCEL_HELP.
                 - Hoi tour/gia/slot/ngay/lich trinh/chi tiet/khuyen mai -> TOUR_RETRIEVAL.
                 - Tu van chung/chinh sach/hanh ly/kinh nghiem -> GENERAL_RAG.
                 """, turnHistory, message);

@@ -55,6 +55,13 @@ public class ChatbotService {
             ".*(coupon|mã\\s*giảm|ma\\s*giam|voucher|mã\\s*khuyến|ma\\s*khuyen|mã\\s*ưu|ma\\s*uu"
             + "|promo\\s*code|discount\\s*code).*";
 
+    private enum RagMode {
+        GENERAL_POLICY,
+        TOUR_CONTEXT,
+        TOUR_SEARCH,
+        DISCOUNT
+    }
+
     // ─────────────────────────────────────────────
     // MAIN HANDLER
     // ─────────────────────────────────────────────
@@ -77,6 +84,15 @@ public class ChatbotService {
 
         // 3. IntentRouter ALWAYS runs first — classifies intent regardless of stage
         IntentResult intent = intentRouter.route(userMessage, state);
+        if (state.getStage() == ConversationState.Stage.COLLECTING_LOOKUP_CODE
+                && intent.getIntent() != IntentResult.Intent.BOOKING_LOOKUP_PAYMENT
+                && intent.getIntent() != IntentResult.Intent.CANCEL
+                && bookingService.extractBookingCodePublic(userMessage) == null) {
+            state.setStage(ConversationState.Stage.IDLE);
+            state.setPreviousStage(null);
+            sessionService.save(sessionId, state);
+            intent = intentRouter.route(userMessage, state);
+        }
         log.info("🎯 Intent: {} (source={}, confidence={})", intent.getIntent(), intent.getRawSource(), intent.getConfidence());
 
         // 4a. Deterministic handlers (no Gemini needed for known intents)
@@ -89,7 +105,12 @@ public class ChatbotService {
 
         // 5. Fall through to RAG if no booking service handled it
         if (resp == null) {
-            resp = handleWithRAG(userMessage, finalRequest, sessionId, state);
+            if (state.getStage() == ConversationState.Stage.COLLECTING_LOOKUP_CODE) {
+                state.setStage(ConversationState.Stage.IDLE);
+                state.setPreviousStage(null);
+                sessionService.save(sessionId, state);
+            }
+            resp = handleWithRAG(userMessage, finalRequest, sessionId, state, chooseRagMode(intent, userMessage));
         }
 
         // 6. Record assistant turn in recentTurns
@@ -117,17 +138,48 @@ public class ChatbotService {
         }
     }
 
-    private ChatMessageResponse handleWithRAG(String userMessage, ChatMessageRequest request, String sessionId, ConversationState state) {
+    private RagMode chooseRagMode(IntentResult intent, String userMessage) {
+        if (intent != null && intent.getIntent() == IntentResult.Intent.TOUR_RETRIEVAL) {
+            if (intent.getRetrievalTask() == RetrievalTask.DISCOUNT || intent.getRetrievalTask() == RetrievalTask.COUPON) {
+                return RagMode.DISCOUNT;
+            }
+            if (intent.getRetrievalTask() == RetrievalTask.SEARCH) {
+                return RagMode.TOUR_SEARCH;
+            }
+            return RagMode.TOUR_CONTEXT;
+        }
+        String normalized = normalizeText(userMessage);
+        if (normalized.matches(".*(giam\\s*gia|khuyen\\s*mai|uu\\s*dai|coupon|voucher).*")) {
+            return RagMode.DISCOUNT;
+        }
+        return RagMode.GENERAL_POLICY;
+    }
+
+    private List<VectorDocumentDTO> filterDocsForRagMode(List<VectorDocumentDTO> docs, RagMode mode) {
+        if (docs == null) return new ArrayList<>();
+        if (mode == RagMode.DISCOUNT || mode == RagMode.TOUR_SEARCH) {
+            return docs;
+        }
+        Set<String> allowed = mode == RagMode.TOUR_CONTEXT
+                ? Set.of("TOUR_SUMMARY", "TOUR_ITINERARY_DAY", "TOUR_POLICY", "FAQ", "REVIEW", "TOUR_DEPARTURE")
+                : Set.of("FAQ", "TOUR_POLICY", "POLICY", "LOCATION", "REVIEW");
+        return docs.stream()
+                .filter(d -> d.getType() != null && allowed.contains(d.getType()))
+                .limit(10)
+                .collect(Collectors.toList());
+    }
+
+    private ChatMessageResponse handleWithRAG(String userMessage, ChatMessageRequest request, String sessionId, ConversationState state, RagMode mode) {
         boolean isDiscountQuery = userMessage.toLowerCase().matches(DISCOUNT_PATTERN);
         boolean isCouponQuery   = userMessage.toLowerCase().matches(COUPON_PATTERN);
-        int topK = (isDiscountQuery || isCouponQuery) ? 50 : 10;
+        int topK = (isDiscountQuery || isCouponQuery || mode == RagMode.DISCOUNT) ? 50 : 10;
 
-        List<VectorDocumentDTO> docs = vectorService.searchSimilar(userMessage, topK);
+        List<VectorDocumentDTO> docs = filterDocsForRagMode(vectorService.searchSimilar(userMessage, topK), mode);
         log.debug("🔍 Retrieved {} documents from Pinecone (topK={})", docs.size(), topK);
 
         // Build context (with recentTurns if available)
         String context = buildEnhancedContext(docs, userMessage);
-        String contextWindow = buildContextWindow(state);
+        String contextWindow = mode == RagMode.GENERAL_POLICY ? "" : buildContextWindow(state);
 
         // Inject booking context block when session is active
         String bookingBlock = buildBookingContextBlock(state);
@@ -136,11 +188,12 @@ public class ChatbotService {
         }
 
         // Build prompt & call Gemini
-        String prompt = buildEnhancedPromptWithHistory(userMessage, context, contextWindow);
+        String prompt = buildEnhancedPromptWithHistory(userMessage, context, contextWindow, mode);
         String reply  = callGeminiAPI(prompt);
         reply = sanitizeGeminiReply(reply);
 
-        boolean showTourCards = !isSupportStyleQuery(userMessage)
+        boolean showTourCards = (mode == RagMode.DISCOUNT || mode == RagMode.TOUR_SEARCH)
+                && !isSupportStyleQuery(userMessage)
                 && (isDiscountQuery || isCouponQuery || isTourLikeQuery(userMessage));
         List<ChatMessageResponse.TourSuggestion> suggestions = showTourCards
                 ? buildTourSuggestions(docs)
@@ -148,7 +201,7 @@ public class ChatbotService {
         List<ChatMessageResponse.QuickAction> quickActions = buildQuickActions(request);
 
         // Add resume/cancel actions when session is in progress
-        if (state.getStage() != ConversationState.Stage.IDLE) {
+        if (hasBookingDraft(state)) {
             quickActions.add(ChatMessageResponse.QuickAction.builder()
                     .label("▶ Tiếp tục đặt tour").action("RESUME_BOOKING").build());
             quickActions.add(ChatMessageResponse.QuickAction.builder()
@@ -199,6 +252,7 @@ public class ChatbotService {
                 ));
             }
             case CANCEL -> {
+                clearBookingDraft(state);
                 state.setStage(ConversationState.Stage.IDLE);
                 state.setPreviousStage(null);
                 sessionService.save(sessionId, state);
@@ -211,6 +265,9 @@ public class ChatbotService {
                 String code = intent.getBookingCode() != null ? intent.getBookingCode()
                         : bookingService.extractBookingCodePublic(userMessage);
                 if (code != null) {
+                    if (intent.getRawSource() != null && intent.getRawSource().contains("payment")) {
+                        return bookingService.performPaymentHelpPublic(code, sessionId, state);
+                    }
                     if (state.getStage() != ConversationState.Stage.IDLE
                             && state.getStage() != ConversationState.Stage.COLLECTING_LOOKUP_CODE) {
                         state.setPreviousStage(state.getStage());
@@ -227,6 +284,15 @@ public class ChatbotService {
                         sessionId, state, List.of(
                         ChatMessageResponse.QuickAction.builder().label("Nhập mã booking").action("LOOKUP").build()
                 ));
+            }
+            case BOOKING_CANCEL_HELP -> {
+                String code = intent.getBookingCode() != null ? intent.getBookingCode()
+                        : bookingService.extractBookingCodePublic(userMessage);
+                if (code != null) {
+                    return bookingService.performCancelHelpPublic(code, sessionId, state);
+                }
+                return buildResponse("Bạn gửi mình mã booking dạng **BK...** để mình hướng dẫn hủy/hoàn tour chính xác nhé.",
+                        sessionId, state, new ArrayList<>());
             }
             case TOUR_RETRIEVAL -> {
                 return handleTourRetrieval(intent, userMessage, sessionId, state);
@@ -485,6 +551,9 @@ public class ChatbotService {
     private ChatMessageResponse buildTourDetailAnswer(IntentResult intent, String sessionId, ConversationState state) {
         List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
         if (results == null || results.isEmpty()) {
+            if (intent.getResolvedTourIdx() != null || intent.getResolvedTourId() != null) {
+                return buildResponse("Mình chưa có danh sách tour nào để xem. Bạn muốn tìm tour đi đâu?", sessionId, state, new ArrayList<>());
+            }
             List<ConversationState.TourGroupDisplay> found = findTourGroupsFromVectors(intent.getQueryText(), 3);
             if (!found.isEmpty()) {
                 state.setLastSearchResults(found);
@@ -537,6 +606,14 @@ public class ChatbotService {
         List<ConversationState.TourGroupDisplay> results = state.getLastSearchResults();
         if (results == null || results.isEmpty()) return new ArrayList<>();
 
+        Integer idx = intent.getResolvedTourIdx();
+        if (idx != null && idx >= 0 && idx < results.size()) return List.of(results.get(idx));
+        if (intent.getResolvedTourId() != null) {
+            return results.stream()
+                    .filter(t -> Objects.equals(t.getTourId(), intent.getResolvedTourId()))
+                    .collect(Collectors.toList());
+        }
+
         String query = normalizeText(intent.getQueryText());
         if (!query.isBlank()) {
             List<ConversationState.TourGroupDisplay> byName = results.stream()
@@ -546,14 +623,6 @@ public class ChatbotService {
             // User typed a concrete tour/location name that does not match current context.
             // Do not silently fall back to the previous tour; caller will search data again.
             if (query.length() >= 5) return new ArrayList<>();
-        }
-
-        Integer idx = intent.getResolvedTourIdx();
-        if (idx != null && idx >= 0 && idx < results.size()) return List.of(results.get(idx));
-        if (intent.getResolvedTourId() != null) {
-            return results.stream()
-                    .filter(t -> Objects.equals(t.getTourId(), intent.getResolvedTourId()))
-                    .collect(Collectors.toList());
         }
         if (state.getLastMentionedTourId() != null) {
             List<ConversationState.TourGroupDisplay> mentioned = results.stream()
@@ -601,7 +670,7 @@ public class ChatbotService {
             if (g.getTourCode() != null) sb.append("- Link: **[Xem tour](/tour/").append(g.getTourCode()).append(")**\n");
             sb.append("\n");
         }
-        if (state.getStage() != ConversationState.Stage.IDLE) {
+        if (hasBookingDraft(state)) {
             sb.append("Bạn vẫn đang ở bước **").append(state.getStage().name()).append("**. Bấm **Tiếp tục đặt tour** để quay lại luồng đang làm nhé.");
         }
         return buildResponse(sb.toString(), sessionId, state, List.of(
@@ -722,10 +791,58 @@ public class ChatbotService {
         return sb.toString();
     }
 
+    private boolean hasBookingDraft(ConversationState state) {
+        if (state == null) return false;
+        if (state.getSelectedTourId() != null || state.getSelectedDepartureId() != null) return true;
+        if (state.getPassengers() != null && !state.getPassengers().isEmpty()) return true;
+        if (state.getContactName() != null || state.getContactPhone() != null || state.getContactEmail() != null) return true;
+        return switch (state.getStage()) {
+            case SELECTING_DEPARTURE, COLLECTING_PASSENGERS, COLLECTING_CONTACT_NAME_PHONE,
+                 COLLECTING_CONTACT_EMAIL, COLLECTING_NOTE_COUPON, CONFIRMING_BOOKING,
+                 BOOKING_SUCCESS -> true;
+            default -> false;
+        };
+    }
+
+    private void clearBookingDraft(ConversationState state) {
+        state.setSelectedTourId(null);
+        state.setSelectedTourCode(null);
+        state.setSelectedTourName(null);
+        state.setSelectedTourImage(null);
+        state.setSelectedDuration(null);
+        state.setDepartureCity(null);
+        state.setSelectedDepartureId(null);
+        state.setDepartureDateDisplay(null);
+        state.setDepartureDateRaw(null);
+        state.setAdultPrice(null);
+        state.setChildPrice(null);
+        state.setToddlerPrice(null);
+        state.setInfantPrice(null);
+        state.setSingleRoomSurcharge(null);
+        state.setAvailableSlots(null);
+        state.setPassengers(new ArrayList<>());
+        state.setCurrentPassengerIndex(0);
+        state.setContactName(null);
+        state.setContactPhone(null);
+        state.setContactEmail(null);
+        state.setContactAddress(null);
+        state.setCustomerNote(null);
+        state.setCouponCodes(new ArrayList<>());
+        state.setPointsUsed(null);
+        state.setBookingCode(null);
+        state.setBookingId(null);
+        state.setTotalPrice(null);
+        state.setPaymentUrl(null);
+        state.setPaymentWaitingLink(null);
+        state.setPaymentDeadline(null);
+        state.setLookupCode(null);
+        state.setLastMentionedDepartureId(null);
+    }
+
     private ChatMessageResponse buildResponse(String reply, String sessionId, ConversationState state,
                                                List<ChatMessageResponse.QuickAction> extraActions) {
         List<ChatMessageResponse.QuickAction> actions = new ArrayList<>(extraActions);
-        if (state.getStage() != ConversationState.Stage.IDLE) {
+        if (hasBookingDraft(state)) {
             actions.add(ChatMessageResponse.QuickAction.builder()
                     .label("▶ Tiếp tục đặt tour").action("RESUME_BOOKING").build());
             actions.add(ChatMessageResponse.QuickAction.builder()
@@ -1051,11 +1168,17 @@ public class ChatbotService {
     /**
      * buildEnhancedPromptWithHistory — giống buildEnhancedPrompt nhưng thêm lịch sử hội thoại.
      */
-    String buildEnhancedPromptWithHistory(String userMessage, String context, String history) {
+    String buildEnhancedPromptWithHistory(String userMessage, String context, String history, RagMode mode) {
         String historySection = (history != null && !history.isBlank())
                 ? "\n=== LỊCH SỬ HỘI THOẠI GẦN NHẤT ===\n" + history + "\n"
                 : "";
-        return buildEnhancedPrompt(userMessage, context).replace(
+        String modeRules = switch (mode) {
+            case GENERAL_POLICY -> "\n=== CHE DO GENERAL_POLICY ===\nChi tra loi dung cau hoi chinh sach/tu van chung. Khong gioi thieu tour, coupon, khuyen mai neu khach khong hoi uu dai. Neu thieu du lieu, noi ro chua co thong tin chi tiet trong he thong.\n";
+            case TOUR_CONTEXT -> "\n=== CHE DO TOUR_CONTEXT ===\nChi dung tour dang duoc resolve trong context. Khong loi tour khac de goi y thay the. Neu thieu chinh sach/bao gom/khong bao gom, noi ro chua co du lieu chi tiet.\n";
+            case TOUR_SEARCH -> "\n=== CHE DO TOUR_SEARCH ===\nChi tra loi cac tour khop dieu kien tim kiem trong context. Khong them tour khong khop de du so luong.\n";
+            case DISCOUNT -> "\n=== CHE DO DISCOUNT ===\nChi liet ke uu dai/coupon co trong context.\n";
+        };
+        return (modeRules + "\n" + buildEnhancedPrompt(userMessage, context)).replace(
                 "=== DỮ LIỆU HỆ THỐNG (CONTEXT) ===",
                 historySection + "=== DỮ LIỆU HỆ THỐNG (CONTEXT) ==="
         );

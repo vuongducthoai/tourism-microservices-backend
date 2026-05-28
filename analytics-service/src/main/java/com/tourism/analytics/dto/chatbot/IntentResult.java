@@ -21,6 +21,7 @@ public class IntentResult {
 
         TRANSACTION_FLOW,
         BOOKING_LOOKUP_PAYMENT,
+        BOOKING_CANCEL_HELP,
         TOUR_RETRIEVAL,
         GENERAL_RAG,
 
