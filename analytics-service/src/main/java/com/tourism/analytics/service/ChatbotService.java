@@ -95,8 +95,18 @@ public class ChatbotService {
         }
         log.info("🎯 Intent: {} (source={}, confidence={})", intent.getIntent(), intent.getRawSource(), intent.getConfidence());
 
+        if (isTourContextReference(userMessage) && !hasTourContext(state)
+                && intent.getIntent() != IntentResult.Intent.CANCEL
+                && intent.getIntent() != IntentResult.Intent.BOOKING_LOOKUP_PAYMENT
+                && intent.getIntent() != IntentResult.Intent.BOOKING_CANCEL_HELP) {
+            resp = buildResponse("Mình chưa có danh sách tour nào để xem. Bạn muốn tìm tour đi đâu?",
+                    sessionId, state, new ArrayList<>());
+        }
+
         // 4a. Deterministic handlers (no Gemini needed for known intents)
-        resp = handleDeterministic(intent, userMessage, sessionId, state, finalRequest);
+        if (resp == null) {
+            resp = handleDeterministic(intent, userMessage, sessionId, state, finalRequest);
+        }
 
         // 4b. Booking flow handler (state machine)
         if (resp == null) {
@@ -802,6 +812,19 @@ public class ChatbotService {
                  BOOKING_SUCCESS -> true;
             default -> false;
         };
+    }
+
+    private boolean hasTourContext(ConversationState state) {
+        if (state == null) return false;
+        if (state.getSelectedTourId() != null || state.getLastMentionedTourId() != null) return true;
+        return state.getLastSearchResults() != null && !state.getLastSearchResults().isEmpty();
+    }
+
+    private boolean isTourContextReference(String message) {
+        String m = normalizeText(message);
+        return m.matches(".*\\b(tour|chuyen|cai)\\s*(nay|do|kia|tren)\\b.*")
+                || m.matches(".*\\btour\\s*[123]\\b.*")
+                || m.matches(".*\\b(dat|chon|xem|lay)\\s*(tour|chuyen|cai)?\\s*(do|nay|kia|tren)\\b.*");
     }
 
     private void clearBookingDraft(ConversationState state) {
