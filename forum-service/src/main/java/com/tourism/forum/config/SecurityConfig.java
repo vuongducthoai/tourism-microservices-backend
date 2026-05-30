@@ -17,6 +17,10 @@ public class SecurityConfig {
         http
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // The API gateway validates the Keycloak JWT and forwards identity via
+            // X-User-Id / X-User-Role headers. Admin authorization for /api/admin/forum/**
+            // is enforced by AdminAuthInterceptor based on that role header, matching how
+            // the rest of the platform secures its services.
             .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
         return http.build();
     }

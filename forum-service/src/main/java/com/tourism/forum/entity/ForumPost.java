@@ -108,4 +108,15 @@ public class ForumPost extends BaseEntity {
 
     @Column(name = "moderated_at")
     private LocalDateTime moderatedAt;
+
+    // Lý do admin từ chối/ẩn bài (khác moderationReason của AI)
+    @Column(name = "admin_rejection_reason", columnDefinition = "TEXT")
+    private String adminRejectionReason;
+
+    // Soft-delete tracking
+    @Column(name = "deleted_by")
+    private Integer deletedBy;
+
+    @Column(name = "delete_reason", columnDefinition = "TEXT")
+    private String deleteReason;
 }

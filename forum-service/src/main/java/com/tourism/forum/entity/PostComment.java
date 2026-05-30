@@ -56,4 +56,14 @@ public class PostComment extends BaseEntity {
 
     @Column(name = "moderated_at")
     private LocalDateTime moderatedAt;
+
+    // Soft-delete tracking
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private Integer deletedBy;
+
+    @Column(name = "delete_reason", columnDefinition = "TEXT")
+    private String deleteReason;
 }

@@ -160,6 +160,11 @@ services:
       - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
       - EUREKA_HOST=service-discovery
       - REDIS_HOST=redis
+      # Validate Keycloak JWTs against the in-network host (tokens are minted via
+      # iam-service at http://keycloak:8080). Without this the gateway defaults to
+      # localhost:8180 — unreachable inside the container — so it can't decode the
+      # JWT and never forwards the X-User-Role header.
+      - KEYCLOAK_SERVER_URL=http://keycloak:8080
     depends_on:
       service-discovery:
         condition: service_healthy

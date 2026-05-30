@@ -7,6 +7,7 @@ import com.tourism.forum.dto.request.PostUpdateRequest;
 import com.tourism.forum.dto.response.PostDetailResponse;
 import com.tourism.forum.dto.response.PostListResponse;
 import com.tourism.forum.service.ForumService;
+import com.tourism.forum.service.ForumRateLimitService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,13 @@ import java.util.Map;
 public class ForumPostController {
 
     private final ForumService forumService;
+    private final ForumRateLimitService rateLimitService;
+
+    // GET /api/forum/posts/quota?userId=xxx — số lượt còn lại trong ngày
+    @GetMapping("/quota")
+    public ResponseEntity<?> getQuota(@RequestParam Integer userId) {
+        return ResponseEntity.ok(Map.of("success", true, "data", rateLimitService.getQuotaStatus(userId)));
+    }
 
     @GetMapping
     public ResponseEntity<?> getPosts(
@@ -162,6 +170,15 @@ public class ForumPostController {
         return ResponseEntity.ok(Map.of("success", true, "data", forumService.getUserStats(userId)));
     }
 
+    @PostMapping("/report")
+    public ResponseEntity<?> createReport(
+            @RequestParam Integer reporterId,
+            @Valid @RequestBody com.tourism.forum.dto.request.ReportRequest request
+    ) {
+        forumService.createReport(reporterId, request);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã gửi báo cáo, cảm ơn bạn"));
+    }
+
     @PostMapping("/{postId}/bookmark")
     public ResponseEntity<?> toggleBookmark(
             @PathVariable Integer postId,
@@ -228,5 +245,20 @@ public class ForumPostController {
             }
         }
         return null;
+    }
+
+    // Rate-limit vi phạm → HTTP 429 với message rõ ràng
+    @ExceptionHandler(com.tourism.forum.service.ForumRateLimitService.RateLimitException.class)
+    public ResponseEntity<?> handleRateLimit(
+            com.tourism.forum.service.ForumRateLimitService.RateLimitException e) {
+        return ResponseEntity.status(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS)
+                .body(Map.of("success", false, "message", e.getMessage()));
+    }
+
+    // RuntimeException nghiệp vụ khác → HTTP 400 (rõ ràng hơn 500)
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<?> handleRuntime(RuntimeException e) {
+        return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", e.getMessage()));
     }
 }
