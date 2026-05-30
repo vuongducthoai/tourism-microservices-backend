@@ -159,7 +159,42 @@ public class LocationResolverService {
 
     private boolean containsTokenized(String text, String value) {
         if (value.isBlank()) return false;
-        return (" " + text + " ").contains(" " + value + " ");
+        // 1. Exact token boundary match (original behaviour)
+        if ((" " + text + " ").contains(" " + value + " ")) return true;
+        // 2. Fuzzy match: split value into tokens, try each token against text tokens
+        //    Allow Levenshtein distance ≤ 2 for tokens with length ≥ 4
+        String[] valueTokens = value.split("\\s+");
+        String[] textTokens  = text.split("\\s+");
+        for (String vt : valueTokens) {
+            if (vt.length() < 4) continue; // skip very short tokens to avoid false positives
+            for (String tt : textTokens) {
+                if (tt.length() < 4) continue;
+                int dist = levenshtein(vt, tt);
+                int maxAllowed = vt.length() <= 5 ? 1 : 2; // stricter for short tokens
+                if (dist <= maxAllowed) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Levenshtein distance — pure Java, no external libs.
+     * Used for typo-tolerant location matching (e.g. "vũng tù" → "vũng tàu").
+     */
+    static int levenshtein(String a, String b) {
+        int la = a.length(), lb = b.length();
+        int[] prev = new int[lb + 1];
+        for (int j = 0; j <= lb; j++) prev[j] = j;
+        for (int i = 1; i <= la; i++) {
+            int[] curr = new int[lb + 1];
+            curr[0] = i;
+            for (int j = 1; j <= lb; j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                curr[j] = Math.min(Math.min(curr[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            prev = curr;
+        }
+        return prev[lb];
     }
 
     private Map<String, Object> readMetadata(VectorDocumentDTO doc) {

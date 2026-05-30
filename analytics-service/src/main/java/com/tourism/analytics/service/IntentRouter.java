@@ -177,11 +177,22 @@ public class IntentRouter {
 
         if (isTourSearch(norm) || hasSearchLocation(norm)) {
             IntentResult r = extractSearchEntities(norm);
+            // Guard: nếu không resolve được destination VÀ không có startLocation → thematic/chung chung → GENERAL_RAG
+            if (r.getDestination() == null && r.getStartLocation() == null) {
+                log.info("🌊 isTourSearch=true nhưng destination=null startLocation=null → GENERAL_RAG (thematic/vague query)");
+                return buildResult(Intent.GENERAL_RAG, "fast-path-thematic", 0.8);
+            }
             r.setIntent(Intent.TOUR_RETRIEVAL);
             r.setRetrievalTask(RetrievalTask.SEARCH);
             r.setRawSource("fast-path");
             r.setConfidence(0.85);
             return r;
+        }
+
+        // Thematic queries ("đi biển", "đi núi") không có entity địa điểm → tư vấn gợi ý qua RAG
+        if (isThematicQuery(norm)) {
+            log.info("🏖️ Thematic query detected → GENERAL_RAG (gợi ý địa điểm theo chủ đề)");
+            return buildResult(Intent.GENERAL_RAG, "fast-path-thematic", 0.82);
         }
 
         if (state.getRecentTurns() != null && !state.getRecentTurns().isEmpty()) {
@@ -338,12 +349,23 @@ public class IntentRouter {
     }
 
     private boolean isTourSearch(String s) {
+        // NOTE: "di bien" / "di nui" đã được tách sang isThematicQuery() — không route SEARCH nếu không có entity địa điểm cụ thể
         return s.matches(".*(tour\\s*(nao|den|di|o|tai|co|gia)|tim\\s*tour|toi\\s*muon\\s*di|muon\\s*di|"
-                + "di\\s*(du\\s*lich|tham\\s*quan|bien|nui)|co\\s*tour\\s*(nao|di|den)|goi\\s*y\\s*tour|"
+                + "di\\s*(du\\s*lich|tham\\s*quan)|co\\s*tour\\s*(nao|di|den)|goi\\s*y\\s*tour|"
                 + "tim\\s*(tour|chuyen|chuyen\\s*di)|^di\\s+[a-z].*).*")
                 || s.matches(".*\\btour\\b.+\\b(den|di)\\b.+")
                 || s.matches(".*\\b[a-z][a-z\\s]+\\b(den|di)\\b\\s+[a-z][a-z\\s]+.*")
                 || (s.matches(".*\\b(co|hoi|xem|di|den)\\b.*") && hasSearchLocation(s));
+    }
+
+    /**
+     * Thematic queries: user muốn đi "biển" / "núi" / "miền Tây" nhưng CHƯA chỉ định địa điểm cụ thể.
+     * Những query này KHÔNG đủ để route TOUR_RETRIEVAL/SEARCH vì không có destination entity.
+     * Chúng sẽ được route sang GENERAL_RAG để bot tư vấn gợi ý địa điểm.
+     */
+    private boolean isThematicQuery(String s) {
+        return s.matches(".*(di\\s*(bien|nui|mien\\s*tay|mien\\s*bac|mien\\s*trung|rung|hoang\\s*sa|son\\s*doong)|"
+                + "tour\\s*(bien|nui|rung|bien\\s*dao|hoang\\s*da)|du\\s*lich\\s*(bien|nui|mien)).*");
     }
 
     private boolean isBookingIntent(String s) {
@@ -513,8 +535,11 @@ public class IntentRouter {
                 .replaceAll("\\b(du\\s*lich|tham\\s*quan|tour|chuyen|cho\\s*toi|giup\\s*toi)\\b", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
-        if (dest.isBlank() || dest.length() < 2 || dest.length() > 40) return null;
+        if (dest.isBlank() || dest.length() < 3 || dest.length() > 40) return null;
+        // Guard: loại bỏ thematic keywords và token quá ngắn tránh false match
         if (dest.matches(".*\\b(bien|nui|gia\\s*re|uu\\s*dai|khuyen\\s*mai)\\b.*")) return null;
+        // Single token phải ≥ 3 chars để tránh "mi" khớp "Hồ Chí Minh"
+        if (!dest.contains(" ") && dest.length() < 3) return null;
         return dest;
     }
 

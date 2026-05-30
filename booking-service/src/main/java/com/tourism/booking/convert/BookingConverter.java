@@ -100,5 +100,12 @@ public class BookingConverter {
         res.setBank(pay.getBank());
         res.setAccountNumber(pay.getAccountNumber());
         res.setAccountName(pay.getAccountName());
+
+        java.time.LocalDateTime createdAt = res.getBookingDate();
+        if (createdAt != null) {
+            res.setPaymentDeadline(createdAt.plusHours(24).toString());
+        } else if (pay.getTimeLimit() != null) {
+            res.setPaymentDeadline(pay.getTimeLimit().plusHours(24).minusMinutes(15).toString());
+        }
     }
 }

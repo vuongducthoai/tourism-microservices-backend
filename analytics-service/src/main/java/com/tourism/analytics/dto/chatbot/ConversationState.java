@@ -100,6 +100,13 @@ public class ConversationState implements Serializable {
     // ─── Order lookup ───
     private String lookupCode;
 
+    // ─── Clarification loop guard ───
+    /** Đếm số lần bot đã hỏi lại slot thiếu (destination) — tránh loop vô hạn */
+    @Builder.Default
+    private int clarificationCount = 0;
+    /** Lý do soft-reset gần nhất — giúp debug production logs */
+    private String lastResetReason;
+
     // ─── Tour search results cache ───
     @Builder.Default
     private List<TourGroupDisplay> lastSearchResults = new ArrayList<>();

@@ -101,6 +101,7 @@ public class BookingConversationService {
             return this.performLookup(msg.trim(), request.getSessionId(), state);
         }
         if (this.isCancel(msg) && state.getStage() != ConversationState.Stage.IDLE && state.getStage() != ConversationState.Stage.COLLECTING_NOTE_COUPON) {
+            log.info("\u270b User cancel flow at stage={} sessionId={} - reset state to IDLE and persist to Redis", state.getStage(), request.getSessionId());
             state.setStage(ConversationState.Stage.IDLE);
             state.setPreviousStage(null);
             state.setPassengers(new ArrayList());
@@ -167,9 +168,30 @@ public class BookingConversationService {
             return clarify;
         }
         if (!this.hasEnoughSearchParams(state)) {
+            // Tăng count mỗi lần hỏi lại mà chưa có destination
+            int count = state.getClarificationCount() + 1;
+            state.setClarificationCount(count);
             this.sessionService.save(sessionId, state);
+
+            // Sau 3 lần hỏi lại liên tiếp → hiện menu gợi ý điểm đến thay vì lặp
+            if (count >= 3) {
+                log.info("\uD83D\uDD01 clarificationCount={} sessionId={} — hiện menu gợi ý điểm đến phổ biến", count, sessionId);
+                state.setClarificationCount(0);
+                this.sessionService.save(sessionId, state);
+                return this.text(
+                    "Bạn đang muốn khám phá điểm đến nào? Dưới đây là một số điểm du lịch phổ biến:\n\n"
+                    + "\uD83C\uDFD6\uFE0F **Đà Nẵng** — biển, cầu Vàng, Hội An\n"
+                    + "\uD83C\uDF3A **Phú Quốc** — đảo ngọc, lặn biển\n"
+                    + "\uD83C\uDFD4\uFE0F **Sapa** — núi, ruộng bậc thang\n"
+                    + "\uD83C\uDF0A **Nha Trang** — biển xanh, hải sản\n"
+                    + "\uD83C\uDFEF **Hội An** — phố cổ, đèn lồng\n\n"
+                    + "Bạn thích đến **đâu**? (hoặc mô tả kiểu chuyến đi bạn muốn \uD83D\uDE0A)",
+                    sessionId, "COLLECTING_SEARCH_INFO");
+            }
+
             return this.text("B\u1ea1n mu\u1ed1n \u0111\u1ebfn **\u0111\u00e2u** v\u00e0 \u0111i v\u00e0o **kho\u1ea3ng th\u1eddi gian** n\u00e0o? M\u1ea5y **ng\u01b0\u1eddi l\u1edbn**? \ud83d\ude42", sessionId, "COLLECTING_SEARCH_INFO");
         }
+        state.setClarificationCount(0); // reset khi đã có đủ params
         return this.doSearch(sessionId, state);
     }
 
@@ -357,6 +379,27 @@ public class BookingConversationService {
         state.setDepartureDateRaw(null);
     }
 
+    /**
+     * softReset — xóa toàn bộ search context (destination, dateRange, results) nhưng GIỮ recentTurns.
+     * Được gọi khi:
+     * - User gửi query mới không có entity địa điểm trong khi đang có kết quả cũ (stale context)
+     * - User gửi thematic query ("đi biển") không có destination cụ thể
+     * Public để ChatbotService gọi được.
+     */
+    public void softReset(ConversationState state, String reason) {
+        log.info("🔄 softReset sessionId=? reason={} oldDest={} oldStage={}", reason, state.getSearchDestination(), state.getStage());
+        state.setSearchDestination(null);
+        state.setSearchStartLocation(null);
+        state.setSearchDateRange(null);
+        state.setSearchDateRangeProvided(false);
+        state.setSearchStartLocationProvided(false);
+        state.setSearchAdultsProvided(false);
+        state.setClarificationCount(0);
+        state.setLastResetReason(reason);
+        clearResultContext(state);
+        state.setStage(ConversationState.Stage.COLLECTING_SEARCH_INFO);
+    }
+
     private ChatMessageResponse handleTourSelection(String msg, String sessionId, ConversationState state) {
         List groups = state.getLastSearchResults();
         if (groups == null || groups.isEmpty()) {
@@ -389,6 +432,16 @@ public class BookingConversationService {
             String lower = msg.toLowerCase();
             if (!explicitNewSearch) {
                 return null;
+            }
+            // Thematic query ("đi biển"/"đi núi") hoặc tìm lại chung → softReset để không dùng context cũ
+            boolean isThematic = this.normalizeLocation(msg).matches(".*(di\\s*bien|di\\s*nui).*");
+            if (isThematic) {
+                this.softReset(state, "thematic-from-results");
+                this.sessionService.save(sessionId, state);
+                return this.text(
+                    "Bạn muốn đi theo chủ đề gì? Hãy cho mình biết **điểm đến cụ thể** nhé!\n\n"
+                    + "Ví dụ: **Đà Nẵng**, **Nha Trang**, **Phú Quốc**, **Sapa**... 🗺️",
+                    sessionId, "COLLECTING_SEARCH_INFO");
             }
             if (lower.length() > 3 && (lower.contains("tour") || lower.contains("\u0111i \u0111\u1ebfn") || lower.contains("\u0111i du l\u1ecbch"))) {
                 state.setSearchDestination(null);

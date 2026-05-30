@@ -88,6 +88,7 @@ public class ChatbotService {
                 && intent.getIntent() != IntentResult.Intent.BOOKING_LOOKUP_PAYMENT
                 && intent.getIntent() != IntentResult.Intent.CANCEL
                 && bookingService.extractBookingCodePublic(userMessage) == null) {
+            log.info("♻️ Reset stage COLLECTING_LOOKUP_CODE -> IDLE for sessionId={} vì user không còn ở luồng tra cứu mã BK", sessionId);
             state.setStage(ConversationState.Stage.IDLE);
             state.setPreviousStage(null);
             sessionService.save(sessionId, state);
@@ -116,6 +117,7 @@ public class ChatbotService {
         // 5. Fall through to RAG if no booking service handled it
         if (resp == null) {
             if (state.getStage() == ConversationState.Stage.COLLECTING_LOOKUP_CODE) {
+                log.info("♻️ Chuẩn bị rơi qua RAG nên reset stage COLLECTING_LOOKUP_CODE -> IDLE cho sessionId={} để tránh giữ context tra cứu sai", sessionId);
                 state.setStage(ConversationState.Stage.IDLE);
                 state.setPreviousStage(null);
                 sessionService.save(sessionId, state);
@@ -419,6 +421,16 @@ public class ChatbotService {
                     state.setSearchDestination(null);
                     state.setSearchStartLocation(null);
                     state.setSearchDateRange(null);
+                }
+                // Guard: nếu intent không cung cấp destination mới VÀ đang có kết quả cũ từ search trước
+                // → soft-reset search context để tránh dùng destination cũ từ Redis
+                if (intent.getDestination() == null && intent.getStartLocation() == null
+                        && (state.getStage() == ConversationState.Stage.SHOWING_SEARCH_RESULTS
+                            || state.getStage() == ConversationState.Stage.COLLECTING_SEARCH_INFO)
+                        && state.getSearchDestination() != null) {
+                    log.info("🔄 Soft-reset search context sessionId={} oldDest={} — intent có destination=null nhưng stage={} có dữ liệu cũ",
+                            request.getSessionId(), state.getSearchDestination(), state.getStage());
+                    bookingService.softReset(state, "new-search-no-entity");
                 }
                 if (intent.getDestination() != null) {
                     boolean collectingWithDestination = state.getStage() == ConversationState.Stage.COLLECTING_SEARCH_INFO
