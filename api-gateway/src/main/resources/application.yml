@@ -67,7 +67,7 @@ spring:
         - id: forum-service
           uri: lb://forum-service
           predicates:
-            - Path=/api/forum/**, /api/posts/**, /api/tags/**, /api/categories/**, /api/bookmarks/**, /api/followers/**
+            - Path=/api/forum/**, /api/posts/**, /api/tags/**, /api/categories/**, /api/bookmarks/**, /api/followers/**, /api/admin/forum/**, /api/admin/moderation/**
           filters:
             - StripPrefix=0
 

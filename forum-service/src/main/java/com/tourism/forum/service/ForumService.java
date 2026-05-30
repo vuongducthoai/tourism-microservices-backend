@@ -59,4 +59,6 @@ public interface ForumService {
     boolean toggleBookmark(Integer postId, Integer userId);
 
     boolean checkBookmarkStatus(Integer postId, Integer userId);
+
+    void createReport(Integer reporterId, com.tourism.forum.dto.request.ReportRequest request);
 }

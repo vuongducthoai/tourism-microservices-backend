@@ -24,4 +24,14 @@ public interface PostCategoryRepository extends JpaRepository<PostCategory, Inte
         ORDER BY COUNT(p) DESC
         """)
     List<PostCategory> findPopularCategories(Pageable pageable);
+
+    @Query("""
+        SELECT c.name, COUNT(p)
+        FROM PostCategory c
+        LEFT JOIN c.posts p
+        WHERE (c.isDeleted IS NULL OR c.isDeleted = false)
+        GROUP BY c.categoryID, c.name
+        ORDER BY COUNT(p) DESC
+        """)
+    List<Object[]> findTopCategoriesWithCount(Pageable pageable);
 }

@@ -9,58 +9,55 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * Chi tiết bài viết cho admin — gồm full content, ảnh, tags, thông tin tác giả,
+ * moderation AI + lý do admin từ chối. Dùng cho Post Detail Modal.
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class PostDetailResponse {
+public class AdminPostDetailResponse {
     private Integer postId;
     private String title;
-    private String content;
+    private String content;        // full HTML
     private String summary;
     private String thumbnailUrl;
-    private String postType;
-    private String status;
-
-    private Integer authorId;
-    private String authorName;
-    private String authorAvatar;
-
+    private List<String> imageUrls;
+    private List<PostListResponse.TagInfo> tags;
     private Integer categoryId;
     private String categoryName;
+    private String status;
+    private String postType;
 
-    private List<PostListResponse.TagInfo> tags;
+    // Tác giả
+    private Integer authorId;
+    private String authorName;
+    private String authorEmail;
+    private String authorAvatar;
 
+    // Moderation AI
+    private Double moderationScore;
+    private String moderationLabel;
+    private String moderationReason;
+
+    // Lý do admin từ chối/ẩn (khác moderationReason của AI)
+    private String adminRejectionReason;
+
+    // Stats
     private Integer viewCount;
     private Integer likeCount;
     private Integer commentCount;
     private Integer bookmarkCount;
-    private Integer shareCount;
-
     private Boolean isPinned;
     private Boolean isFeatured;
-
-    private Boolean isLikedByCurrentUser;
-    private Boolean isBookmarkedByCurrentUser;
-
-    private List<CommentResponse> comments;
-
-    // AI Moderation info (của bài viết)
-    private String moderationLabel;   // SAFE / BORDERLINE / TOXIC
-    private String moderationReason;
-    private Double moderationScore;
-
-    // Kết quả kiểm duyệt của COMMENT vừa gửi (chỉ set khi addComment)
-    private String commentModerationLabel;   // SAFE / BORDERLINE / TOXIC
-    private String commentModerationReason;
-    private Double commentModerationScore;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    private LocalDateTime updatedAt;
+    private LocalDateTime publishedAt;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    private LocalDateTime publishedAt;
+    private LocalDateTime moderatedAt;
 }

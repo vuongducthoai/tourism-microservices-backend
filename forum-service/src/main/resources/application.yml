@@ -85,8 +85,16 @@ groq:
 
 moderation:
   thresholds:
-    safe: 0.3     # score < 0.3  → SAFE → auto publish 
+    safe: 0.3     # score < 0.3  → SAFE → auto publish
     toxic: 0.7   # score >= 0.7 → TOXIC → auto reject
      # 0.3 – 0.7 → BORDERLINE → chờ admin duyệt
   enabled: true  # false = tắt moderation, mọi bài tự động PUBLISHED
+
+forum:
+  ratelimit:
+    enabled: true
+    comment-cooldown-sec: 15      # tối thiểu 15s giữa 2 comment
+    post-cooldown-sec: 60         # tối thiểu 60s giữa 2 bài
+    max-comments-per-day: 100     # quota comment/ngày
+    max-posts-per-day: 10         # quota bài viết/ngày
 

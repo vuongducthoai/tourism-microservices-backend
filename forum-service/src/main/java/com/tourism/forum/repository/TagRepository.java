@@ -1,6 +1,7 @@
 package com.tourism.forum.repository;
 
 import com.tourism.forum.entity.Tag;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +12,8 @@ import java.util.Optional;
 public interface TagRepository extends JpaRepository<Tag, Integer> {
 
     Optional<Tag> findByName(String name);
+
+    Page<Tag> findByNameContainingIgnoreCase(String name, Pageable pageable);
 
     @Query("""
         SELECT t FROM Tag t

@@ -51,6 +51,9 @@ public class ForumServiceImpl implements ForumService {
     private final ForumEventPublisher forumEventPublisher;
     private final FollowerRepository followerRepository;
     private final ModerationService moderationService;
+    private final com.tourism.forum.service.ForumRateLimitService rateLimitService;
+    private final com.tourism.forum.repository.ForumUserRestrictionRepository restrictionRepository;
+    private final com.tourism.forum.repository.ContentReportRepository reportRepository;
 
     // Simple in-memory cache cho user info (tránh Feign call lặp lại)
     private final Map<Integer, UserBriefResponse> userCache = new ConcurrentHashMap<>();
@@ -134,6 +137,7 @@ public class ForumServiceImpl implements ForumService {
         List<CommentResponse> replies = comment.getReplies() == null ? List.of() :
             comment.getReplies().stream()
                 .filter(r -> r.getIsDeleted() == null || !r.getIsDeleted())
+                .filter(r -> ContentStatus.PUBLISHED.equals(r.getStatus()))
                 .sorted(Comparator.comparing(
                     r -> r.getCreatedAt() == null ? java.time.LocalDateTime.MIN : r.getCreatedAt()))
                 .map(r -> mapToCommentResponse(r, currentUserId))
@@ -301,6 +305,14 @@ public class ForumServiceImpl implements ForumService {
 
     @Override
     public PostDetailResponse createPost(CreatePostRequest request) {
+        // Chặn user bị cấm forum (không ảnh hưởng tính năng khác)
+        checkForumBan(request.getUserId());
+        // Anti-spam: draft không tính quota, chỉ giới hạn bài publish
+        if (!Boolean.TRUE.equals(request.getIsDraft())) {
+            rateLimitService.checkPostLimit(request.getUserId());
+            rateLimitService.checkDuplicate(request.getUserId(), request.getTitle());
+        }
+
         PostCategory category = categoryRepository.findById(request.getCategoryId())
             .orElseThrow(() -> new RuntimeException("Category not found: " + request.getCategoryId()));
 
@@ -492,6 +504,12 @@ public class ForumServiceImpl implements ForumService {
 
     @Override
     public PostDetailResponse addComment(Integer postId, CommentRequest request) {
+        // Chặn user bị cấm forum
+        checkForumBan(request.getUserId());
+        // Anti-spam: cooldown + quota ngày + chống duplicate
+        rateLimitService.checkCommentLimit(request.getUserId());
+        rateLimitService.checkDuplicate(request.getUserId(), request.getContent());
+
         ForumPost post = forumPostRepository.findById(postId)
             .orElseThrow(() -> new RuntimeException("Post not found: " + postId));
 
@@ -517,10 +535,13 @@ public class ForumServiceImpl implements ForumService {
         if("TOXIC".equals(mod.getLabel())){
             comment.setStatus(ContentStatus.HIDDEN);
             // Không tăng commentCount, không gửi notification
-            PostComment savedComment = commentRepository.save(comment);
-            return mapToDetailResponse(post, request.getUserId());
+            commentRepository.save(comment);
+            return withCommentModeration(mapToDetailResponse(post, request.getUserId()), mod);
         } else if ("BORDERLINE".equals(mod.getLabel())) {
-            comment.setStatus(ContentStatus.PENDING_REVIEW); 
+            // Chờ admin duyệt — chưa hiển thị công khai, không tăng count, không notify
+            comment.setStatus(ContentStatus.PENDING_REVIEW);
+            commentRepository.save(comment);
+            return withCommentModeration(mapToDetailResponse(post, request.getUserId()), mod);
         }
 
         PostComment savedComment = commentRepository.save(comment);
@@ -560,7 +581,15 @@ public class ForumServiceImpl implements ForumService {
                 .parentCommentId(parentComment.getCommentID())
                 .build());
         }
-        return mapToDetailResponse(post, request.getUserId());
+        return withCommentModeration(mapToDetailResponse(post, request.getUserId()), mod);
+    }
+
+    /** Gắn kết quả kiểm duyệt của comment vừa gửi vào response để FE thông báo cho user. */
+    private PostDetailResponse withCommentModeration(PostDetailResponse resp, ModerationResult mod) {
+        resp.setCommentModerationLabel(mod.getLabel());
+        resp.setCommentModerationReason(mod.getReason());
+        resp.setCommentModerationScore(mod.getScore());
+        return resp;
     }
 
     @Override
@@ -766,5 +795,55 @@ public class ForumServiceImpl implements ForumService {
                 .replaceAll("&[a-zA-Z]+;", " ")   // &nbsp; &amp; v.v.
                 .replaceAll("\\s+", " ")
                 .trim();
+    }
+
+    /** Chặn user bị cấm hoạt động forum. Ban đã hết hạn → tự bỏ active. */
+    @Override
+    public void createReport(Integer reporterId, com.tourism.forum.dto.request.ReportRequest request) {
+        if (reporterId == null) throw new RuntimeException("Bạn cần đăng nhập để báo cáo");
+        com.tourism.forum.entity.ModerationAuditLog.TargetType targetType =
+                com.tourism.forum.entity.ModerationAuditLog.TargetType.valueOf(request.getTargetType().toUpperCase());
+
+        if (reportRepository.existsByReporterIdAndTargetTypeAndTargetId(reporterId, targetType, request.getTargetId())) {
+            throw new RuntimeException("Bạn đã báo cáo nội dung này rồi");
+        }
+
+        String preview = null;
+        if (targetType == com.tourism.forum.entity.ModerationAuditLog.TargetType.POST) {
+            preview = forumPostRepository.findById(request.getTargetId())
+                    .map(p -> stripHtml(p.getTitle())).orElse(null);
+        } else {
+            preview = commentRepository.findById(request.getTargetId())
+                    .map(c -> stripHtml(c.getContent())).orElse(null);
+        }
+        if (preview != null && preview.length() > 500) preview = preview.substring(0, 500);
+
+        reportRepository.save(com.tourism.forum.entity.ContentReport.builder()
+                .targetType(targetType)
+                .targetId(request.getTargetId())
+                .reporterId(reporterId)
+                .reason(com.tourism.forum.entity.ReportReason.valueOf(request.getReason().toUpperCase()))
+                .detail(request.getDetail())
+                .status(com.tourism.forum.entity.ReportStatus.PENDING)
+                .targetPreview(preview)
+                .build());
+    }
+
+    private void checkForumBan(Integer userId) {
+        if (userId == null) return;
+        restrictionRepository.findFirstByUserIdAndActiveTrueOrderByCreatedAtDesc(userId)
+            .ifPresent(r -> {
+                LocalDateTime until = r.getBannedUntil();
+                if (until != null && until.isBefore(LocalDateTime.now())) {
+                    // Ban hết hạn → tự gỡ
+                    r.setActive(false);
+                    restrictionRepository.save(r);
+                    return;
+                }
+                String when = until == null ? "vĩnh viễn" : "đến " + until.toLocalDate();
+                throw new RuntimeException(
+                    "Tài khoản của bạn bị hạn chế hoạt động trên diễn đàn (" + when + ")."
+                    + (r.getReason() != null ? " Lý do: " + r.getReason() : ""));
+            });
     }
 }
