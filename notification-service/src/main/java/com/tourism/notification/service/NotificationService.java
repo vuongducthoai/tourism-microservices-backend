@@ -12,6 +12,12 @@ public interface NotificationService {
 
     void handleBookingConfirmed(BookingEventDTO event);
 
+    void handleCoinWithdrawal(BookingEventDTO event);
+
+    void handleCoinWithdrawalFailed(BookingEventDTO event);
+
+    void handleCoinWithdrawalManual(BookingEventDTO event);
+
     void handleUserStatusUpdated(UserStatusEventDTO event);
 
     void handleCouponCreated(CouponEventDTO event);

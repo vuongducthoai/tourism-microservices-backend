@@ -28,6 +28,11 @@ public interface UserService {
     void deductCoins(Integer userId, java.math.BigDecimal amount);
 
     /**
+     * Deduct coins from user's coin balance with idempotency protection.
+     */
+    void deductCoins(Integer userId, java.math.BigDecimal amount, String operationKey);
+
+    /**
      * Admin search users by fullName / phone / email.
      * Returns only CUSTOMER role, sorted Online → Away → Offline.
      */

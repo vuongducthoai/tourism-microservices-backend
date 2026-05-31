@@ -76,15 +76,17 @@ public class OutboxRelayScheduler {
         List<OutboxEvent> allPending = outboxRepo.findAndLockPending(
                 LocalDateTime.now(), BATCH_SIZE * 2);
 
-        // Exclude COIN_REFUND rows — handled by CoinRefundRelayScheduler
+        // Exclude internal rows — handled by dedicated schedulers
         List<OutboxEvent> batch = allPending.stream()
                 .filter(e -> !RabbitMQConfig.RK_COIN_REFUND.equals(e.getRoutingKey()))
+            .filter(e -> !RabbitMQConfig.RK_COIN_WITHDRAWAL.equals(e.getRoutingKey()))
                 .limit(BATCH_SIZE)
                 .toList();
 
-        // Release coin rows immediately
+        // Release internal rows immediately
         allPending.stream()
-                .filter(e -> RabbitMQConfig.RK_COIN_REFUND.equals(e.getRoutingKey()))
+            .filter(e -> RabbitMQConfig.RK_COIN_REFUND.equals(e.getRoutingKey())
+                || RabbitMQConfig.RK_COIN_WITHDRAWAL.equals(e.getRoutingKey()))
                 .forEach(e -> {
                     e.setStatus(OutboxStatus.NEW);
                     e.setLockedBy(null);
