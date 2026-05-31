@@ -49,13 +49,26 @@ public class BookingEventDTO implements Serializable {
     /** Used by CoinRefundRelayScheduler to pass idempotency key to IAM */
     private String     coinRefundOperationKey;
 
+    // Coin withdrawal path
+    private String     referenceCode;
+    private BigDecimal coinWithdrawalAmount;
+    private BigDecimal withdrawalMoneyAmount;
+    private String     withdrawalBank;
+    private String     withdrawalAccountNumberMasked;
+    private String     withdrawalAccountName;
+    private String     withdrawalStatus;
+    private String     withdrawalTransferRef;
+    private String     withdrawalNote;
+    private String     withdrawalErrorSource;
+
     private Integer    userId;
 
     // ── RabbitMQ routing fields ──────────────────────────────────────────────
 
     /**
      * Discriminator used by BookingEventListener to dispatch to the right handler.
-     * Values: BOOKING_CONFIRMED | STATUS_UPDATED | REFUND_REQUESTED | REFUND_COMPLETED
+    * Values: BOOKING_CONFIRMED | STATUS_UPDATED | REFUND_REQUESTED |
+    * REFUND_COMPLETED | COIN_WITHDRAWAL | COIN_WITHDRAWAL_FAILED | COIN_WITHDRAWAL_MANUAL
      */
     private String     eventType;
 

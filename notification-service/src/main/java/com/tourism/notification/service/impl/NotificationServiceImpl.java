@@ -142,6 +142,58 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
+    public void handleCoinWithdrawal(BookingEventDTO event) {
+        log.info("Handling coin withdrawal completed for ref={}", event.getReferenceCode());
+
+        if (event.getUserId() != null) {
+            saveNotification(
+                    event.getUserId(),
+                    NotificationType.COIN_WITHDRAWAL,
+                    "Rut diem thanh cong",
+                    String.format("Lenh rut %s da chuyen khoan thanh cong %s VND vao tai khoan %s.",
+                            event.getReferenceCode(),
+                            event.getWithdrawalMoneyAmount() != null ? event.getWithdrawalMoneyAmount().toPlainString() : "0",
+                            event.getWithdrawalAccountNumberMasked()),
+                    event.getReferenceCode()
+            );
+        }
+    }
+
+    @Override
+    public void handleCoinWithdrawalFailed(BookingEventDTO event) {
+        log.info("Handling coin withdrawal failed for ref={}", event.getReferenceCode());
+
+        if (event.getUserId() != null) {
+            saveNotification(
+                    event.getUserId(),
+                    NotificationType.COIN_WITHDRAWAL_FAILED,
+                    "Rut diem that bai",
+                    String.format("Lenh rut %s that bai. Diem da duoc hoan lai. Ly do: %s.",
+                            event.getReferenceCode(),
+                            event.getWithdrawalNote() != null ? event.getWithdrawalNote() : "He thong se kiem tra lai"),
+                    event.getReferenceCode()
+            );
+        }
+    }
+
+    @Override
+    public void handleCoinWithdrawalManual(BookingEventDTO event) {
+        log.info("Handling coin withdrawal manual for ref={}", event.getReferenceCode());
+
+        if (event.getUserId() != null) {
+            saveNotification(
+                    event.getUserId(),
+                    NotificationType.COIN_WITHDRAWAL_MANUAL,
+                    "Lenh rut dang xu ly thu cong",
+                    String.format("Lenh rut %s can can thiep boi bo phan van hanh. Trang thai hien tai: %s.",
+                            event.getReferenceCode(),
+                            event.getWithdrawalStatus()),
+                    event.getReferenceCode()
+            );
+        }
+    }
+
+    @Override
     public void handleUserStatusUpdated(UserStatusEventDTO event) {
         log.info("Handling user-status-updated for userId={}, status={}", event.getUserID(), event.getStatus());
         mailService.sendAccountStatusEmail(event);

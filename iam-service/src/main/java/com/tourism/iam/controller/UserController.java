@@ -79,9 +79,14 @@ public class UserController {
     @PostMapping("/{userID}/deduct-coins")
     public ResponseEntity<Void> deductCoins(
             @PathVariable Integer userID,
-            @RequestParam BigDecimal amount
+                        @RequestParam BigDecimal amount,
+                        @RequestParam(required = false) String operationKey
     ) {
-        userService.deductCoins(userID, amount);
+                if (operationKey != null && !operationKey.isBlank()) {
+                        userService.deductCoins(userID, amount, operationKey);
+                } else {
+                        userService.deductCoins(userID, amount);
+                }
         return ResponseEntity.ok().build();
     }
 

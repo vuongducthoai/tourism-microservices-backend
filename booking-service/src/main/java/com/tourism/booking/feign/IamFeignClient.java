@@ -20,6 +20,13 @@ public interface IamFeignClient {
 
     @PostMapping("/api/users/{userId}/deduct-coins")
     void deductCoins(@PathVariable Integer userId, @RequestParam BigDecimal amount);
+
+        @PostMapping("/api/users/{userId}/deduct-coins")
+        void deductCoins(
+            @PathVariable Integer userId,
+            @RequestParam BigDecimal amount,
+            @RequestParam String operationKey);
+
     /**
      * Add coins to user's balance after a coin-refund cancellation.
      * Maps to POST /api/users/{userId}/coins?amount=X&operationKey=Y in iam-service.

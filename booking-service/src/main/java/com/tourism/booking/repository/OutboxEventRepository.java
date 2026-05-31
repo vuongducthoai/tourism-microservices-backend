@@ -46,6 +46,8 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
 
     boolean existsByIdempotencyKey(String idempotencyKey);
 
+        java.util.Optional<OutboxEvent> findByIdempotencyKey(String idempotencyKey);
+
     /** Count DEAD rows — used for health check / alerting */
     long countByStatus(OutboxStatus status);
 

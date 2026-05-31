@@ -26,7 +26,13 @@ public class GatewayRoutesConfig {
 
                 // Booking Service
                 .route("booking-service", r -> r
-                        .path("/api/bookings/**", "/api/coupons/**")
+                        .path(
+                                "/api/bookings/**",
+                                "/api/coupons/**",
+                                "/api/admin/bookings/**",
+                                "/api/admin/coupons/**",
+                                "/api/coin-withdrawals/**"
+                        )
                         .uri("lb://booking-service"))
 
                 // Payment Service

@@ -43,6 +43,7 @@ public class BookingResponse {
     private Integer       paymentID;
     private BigDecimal    amount;           // monolith: amount (NOT paymentAmount)
     private LocalDateTime timeLimit;
+    private String        paymentDeadline;
     private String        bank;             // monolith: bank
     private String        accountNumber;    // monolith: accountNumber
     private String        accountName;      // monolith: accountName

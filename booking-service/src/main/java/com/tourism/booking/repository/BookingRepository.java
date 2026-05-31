@@ -17,7 +17,7 @@ public interface BookingRepository extends JpaRepository<Booking, Integer>, Book
     @Query("""
             SELECT b FROM Booking b
             LEFT JOIN FETCH b.passengers
-            WHERE b.bookingCode = :code
+            WHERE UPPER(b.bookingCode) = UPPER(:code)
               AND (b.isDeleted IS NULL OR b.isDeleted = false)
             """)
     Optional<Booking> findByBookingCodeWithPassengers(@Param("code") String code);

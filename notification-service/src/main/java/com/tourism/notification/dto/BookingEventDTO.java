@@ -51,6 +51,18 @@ public class BookingEventDTO implements Serializable {
     /** Idempotency key passed through for coin relay */
     private String  coinRefundOperationKey;
 
+    // Coin withdrawal info
+    private String  referenceCode;
+    private BigDecimal coinWithdrawalAmount;
+    private BigDecimal withdrawalMoneyAmount;
+    private String  withdrawalBank;
+    private String  withdrawalAccountNumberMasked;
+    private String  withdrawalAccountName;
+    private String  withdrawalStatus;
+    private String  withdrawalTransferRef;
+    private String  withdrawalNote;
+    private String  withdrawalErrorSource;
+
     // User reference
     private Integer userId;
 
@@ -58,7 +70,8 @@ public class BookingEventDTO implements Serializable {
 
     /**
      * Discriminator used by BookingEventListener to dispatch to the right handler.
-     * Values: BOOKING_CONFIRMED | STATUS_UPDATED | REFUND_REQUESTED | REFUND_COMPLETED
+    * Values: BOOKING_CONFIRMED | STATUS_UPDATED | REFUND_REQUESTED |
+    * REFUND_COMPLETED | COIN_WITHDRAWAL | COIN_WITHDRAWAL_FAILED | COIN_WITHDRAWAL_MANUAL
      */
     private String  eventType;
 

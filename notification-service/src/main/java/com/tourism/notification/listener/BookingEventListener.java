@@ -64,6 +64,15 @@ public class BookingEventListener {
                 case "REFUND_REQUESTED" ->
                         notificationService.handleRefundRequested(event);
 
+                case "COIN_WITHDRAWAL" ->
+                    notificationService.handleCoinWithdrawal(event);
+
+                case "COIN_WITHDRAWAL_FAILED" ->
+                    notificationService.handleCoinWithdrawalFailed(event);
+
+                case "COIN_WITHDRAWAL_MANUAL" ->
+                    notificationService.handleCoinWithdrawalManual(event);
+
                 default -> {
                     // Fallback: try to route by bookingStatus for backward compat
                     String status = event.getBookingStatus() != null ? event.getBookingStatus() : "";

@@ -38,6 +38,13 @@ public class RabbitMQConfig {
      */
     public static final String RK_COIN_REFUND  = "booking.coin.refund";
 
+    /**
+     * Special internal routing key for automatic coin withdrawal events.
+     * These are NOT published to RabbitMQ — CoinWithdrawalRelayScheduler
+     * reads them from outbox_events and calls the transfer provider.
+     */
+    public static final String RK_COIN_WITHDRAWAL = "booking.coin.withdrawal.event";
+
     // ── Queues ────────────────────────────────────────────────────────────────
     public static final String QUEUE_NOTIFICATION = "booking.notification.queue";
     public static final String QUEUE_ANALYTICS    = "booking.analytics.queue";

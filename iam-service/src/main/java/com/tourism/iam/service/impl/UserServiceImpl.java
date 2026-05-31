@@ -117,6 +117,16 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void deductCoins(Integer userId, java.math.BigDecimal amount) {
+        deductCoins(userId, amount, null);
+    }
+
+    @Override
+    @Transactional
+    public void deductCoins(Integer userId, java.math.BigDecimal amount, String operationKey) {
+        if (operationKey != null && coinTransactionRepository.existsByOperationKey(operationKey)) {
+            log.info("Skipping duplicate coin debit: operationKey={}", operationKey);
+            return;
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found: " + userId));
         java.math.BigDecimal current = user.getCoinBalance() != null
@@ -127,6 +137,15 @@ public class UserServiceImpl implements UserService {
         }
         user.setCoinBalance(current.subtract(amount));
         userRepository.save(user);
+
+        if (operationKey != null) {
+            coinTransactionRepository.save(com.tourism.iam.entity.CoinTransaction.builder()
+                    .operationKey(operationKey)
+                    .userId(userId)
+                    .amount(amount)
+                    .direction("DEBIT")
+                    .build());
+        }
     }
 
     @Override

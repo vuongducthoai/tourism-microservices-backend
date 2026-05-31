@@ -66,7 +66,11 @@ sepay:
   token: 5DIRHLIEPC9Y0GFKSNXACCQPEREHL3A1BVNTKS8X8DRFNHWDRXFWK4PWMUZKQG0J
   account-number: "10002897094"
   account-name: TRAN ANH THU
-  bank-code: BIDV
+  bank-code: TCB
+  transfer-path: /transfers
+
+transfer:
+  provider: sepay
 
 springdoc:
   api-docs:

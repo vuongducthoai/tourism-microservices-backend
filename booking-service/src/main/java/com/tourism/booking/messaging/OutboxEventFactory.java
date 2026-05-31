@@ -3,6 +3,7 @@ package com.tourism.booking.messaging;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.booking.config.RabbitMQConfig;
+import com.tourism.booking.entity.CoinWithdrawal;
 import com.tourism.booking.entity.OutboxEvent;
 import com.tourism.booking.event.BookingEventDTO;
 
@@ -52,6 +53,26 @@ public final class OutboxEventFactory {
                 .payload(toJson(dto, mapper))
                 .maxRetries(20)         // coin refund needs more retry chances than notification
                 .maxBackoffSecs(3600L)  // cap at 1 hour per attempt (~15h total grace period)
+                .build();
+    }
+
+    /**
+     * Coin withdrawal event → handled by CoinWithdrawalRelayScheduler via transfer provider.
+     * NOT published to RabbitMQ.
+     */
+    public static OutboxEvent coinWithdrawal(BookingEventDTO dto,
+                                             CoinWithdrawal withdrawal,
+                                             ObjectMapper mapper) {
+        String key = withdrawal.getOperationKey();
+        dto.setIdempotencyKey(key);
+
+        return OutboxEvent.builder()
+                .idempotencyKey(key)
+                .exchange(RabbitMQConfig.EXCHANGE)
+                .routingKey(RabbitMQConfig.RK_COIN_WITHDRAWAL)
+                .payload(toJson(dto, mapper))
+                .maxRetries(10)
+                .maxBackoffSecs(1800L)
                 .build();
     }
 
