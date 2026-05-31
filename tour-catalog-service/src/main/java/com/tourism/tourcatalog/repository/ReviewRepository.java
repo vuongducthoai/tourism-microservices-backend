@@ -47,4 +47,17 @@ public interface ReviewRepository extends JpaRepository<Review, Integer> {
     /** Dashboard: average rating toàn bộ hệ thống */
     @Query("SELECT AVG(r.rating) FROM Review r WHERE r.isVisible = true")
     Double calculateAverageRating();
+
+    /** Lấy tối đa N review mới nhất (visible, có comment đủ dài) để feed cho AI summary. */
+    @Query("SELECT r FROM Review r " +
+           "WHERE r.tour.tourID = :tourId " +
+           "  AND r.isVisible = true " +
+           "  AND r.comment IS NOT NULL AND LENGTH(r.comment) >= 20 " +
+           "ORDER BY r.createdAt DESC")
+    List<Review> findTopReviewsForSummary(@Param("tourId") Integer tourId,
+                                          org.springframework.data.domain.Pageable pageable);
+
+    /** Đếm review hợp lệ (visible) của 1 tour. */
+    @Query("SELECT COUNT(r) FROM Review r WHERE r.tour.tourID = :tourId AND r.isVisible = true")
+    long countVisibleByTourId(@Param("tourId") Integer tourId);
 }
