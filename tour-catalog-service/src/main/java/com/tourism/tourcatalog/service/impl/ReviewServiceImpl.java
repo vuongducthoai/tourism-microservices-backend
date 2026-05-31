@@ -16,6 +16,7 @@ import com.tourism.tourcatalog.repository.ReviewRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
 import com.tourism.tourcatalog.service.FileStorageService;
 import com.tourism.tourcatalog.service.ReviewService;
+import com.tourism.tourcatalog.service.ReviewSummaryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -42,6 +43,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final FileStorageService fileStorageService;
     private final BookingFeignClient bookingClient;
     private final IamFeignClient     iamClient;
+    private final ReviewSummaryService reviewSummaryService;
 
     // ── Submit review ─────────────────────────────────────────────────────────
 
@@ -111,6 +113,11 @@ public class ReviewServiceImpl implements ReviewService {
 
         // 8. Persist review (cascades to image_reviews)
         Review saved = reviewRepository.save(review);
+
+        // 8b. Đánh dấu AI summary stale — fire-and-forget, không block flow
+        if (saved.getTour() != null) {
+            reviewSummaryService.markStale(saved.getTour().getTourID());
+        }
 
         // 9. Fire-and-forget: update booking status → REVIEWED
         final Integer finalUserId = userId;

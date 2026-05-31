@@ -80,3 +80,17 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# ── AI Review Summary (Groq Llama 3.3 70B) ─────────────────────────────────
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+    model: llama-3.3-70b-versatile
+
+review-summary:
+  min-reviews: 10               # Tour < 10 review → không gen
+  max-reviews-feed: 50          # Tối đa feed 50 review cho AI
+  regen-after-days: 7           # Cũ hơn 7 ngày → cron tự regen
+  timeout-sec: 30
+  cron-enabled: true
+  cron-expr: "0 0 2 * * *"      # 02:00 mỗi đêm

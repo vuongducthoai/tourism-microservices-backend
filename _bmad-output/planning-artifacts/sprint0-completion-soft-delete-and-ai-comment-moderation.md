@@ -34,7 +34,7 @@ So sánh: **bài viết** thì hiển thị qua `getPosts()` đã có filter `st
 
 ### 2.2. Fix #1 — Query top-level comments
 
-**File**: [PostCommentRepository.java](../../forum-service/src/main/java/com/tourism/forum/repository/PostCommentRepository.java) dòng 63–71
+**File**: [PostCommentRepository.java](../../forum-service/src/main/java/com/"feat(forum): admin forum management - Sprints 0 to 5tourism/forum/repository/PostCommentRepository.java) dòng 63–71
 
 ```java
 @Query("""

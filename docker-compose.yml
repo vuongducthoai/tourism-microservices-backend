@@ -243,6 +243,7 @@ services:
       - EUREKA_HOST=service-discovery
       - REDIS_HOST=redis
       - RABBITMQ_HOST=rabbitmq
+      - GROQ_API_KEY=${GROQ_API_KEY}
     depends_on:
       service-discovery:
         condition: service_healthy
