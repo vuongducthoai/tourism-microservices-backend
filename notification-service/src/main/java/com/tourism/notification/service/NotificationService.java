@@ -23,4 +23,7 @@ public interface NotificationService {
     void handleCouponCreated(CouponEventDTO event);
 
     void handleCouponUpdated(CouponEventDTO event);
+
+    /** Yêu cầu tư vấn mới — push admin WebSocket. */
+    void handleConsultationCreated(BookingEventDTO event);
 }

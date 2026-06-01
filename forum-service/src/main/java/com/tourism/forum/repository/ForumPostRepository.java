@@ -32,9 +32,22 @@ public interface ForumPostRepository extends JpaRepository<ForumPost, Integer>, 
         WHERE p.status = 'PUBLISHED'
           AND p.createdAt >= :since
           AND p.isDeleted = false
-        ORDER BY (p.viewCount * 1 + p.likeCount * 3 + p.commentCount * 2) DESC
+        ORDER BY p.isPinned DESC,
+                 (p.viewCount * 1 + p.likeCount * 3 + p.commentCount * 2) DESC
         """)
     Page<ForumPost> findTrendingPosts(@Param("since") LocalDateTime since, Pageable pageable);
+
+    /** Sprint A: Nổi bật — sort theo likeCount + commentCount trong window, kèm pin đầu. */
+    @Query("""
+        SELECT p FROM ForumPost p
+        WHERE p.status = 'PUBLISHED'
+          AND p.createdAt >= :since
+          AND p.isDeleted = false
+        ORDER BY p.isPinned DESC,
+                 (p.likeCount * 2 + p.commentCount * 1) DESC,
+                 p.createdAt DESC
+        """)
+    Page<ForumPost> findPopularPosts(@Param("since") LocalDateTime since, Pageable pageable);
 
     // ── Admin stats / analytics ────────────────────────────────────────────────
     long countByIsDeletedFalse();

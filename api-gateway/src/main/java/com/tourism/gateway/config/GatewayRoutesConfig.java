@@ -31,7 +31,9 @@ public class GatewayRoutesConfig {
                                 "/api/coupons/**",
                                 "/api/admin/bookings/**",
                                 "/api/admin/coupons/**",
-                                "/api/coin-withdrawals/**"
+                                "/api/coin-withdrawals/**",
+                                "/api/consultations/**",
+                                "/api/admin/consultations/**"
                         )
                         .uri("lb://booking-service"))
 
@@ -54,6 +56,9 @@ public class GatewayRoutesConfig {
                 // Notification Service WebSocket
                 .route("notification-service-websocket", r -> r
                         .path("/ws/**")
+                        .filters(f -> f.dedupeResponseHeader(
+                                "Access-Control-Allow-Origin Access-Control-Allow-Credentials",
+                                "RETAIN_UNIQUE"))
                         .uri("lb:ws://notification-service"))
 
                 // Analytics Service

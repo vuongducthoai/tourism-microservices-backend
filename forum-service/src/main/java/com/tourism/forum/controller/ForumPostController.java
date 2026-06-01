@@ -197,6 +197,60 @@ public class ForumPostController {
         return ResponseEntity.ok(Map.of("success", true, "data", Map.of("isBookmarked", isBookmarked)));
     }
 
+    // ── Sprint A: Bookmark list ─────────────────────────────────────────────
+    @GetMapping("/bookmarks")
+    public ResponseEntity<?> getMyBookmarks(
+            @RequestParam Integer userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        var data = forumService.getBookmarkedPosts(userId,
+                org.springframework.data.domain.PageRequest.of(page, size));
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    // ── Sprint B: Share counter ─────────────────────────────────────────────
+    @PostMapping("/{postId}/share")
+    public ResponseEntity<?> recordShare(
+            @PathVariable Integer postId,
+            @RequestParam(required = false, defaultValue = "copy") String channel
+    ) {
+        forumService.recordShare(postId, channel);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã ghi nhận chia sẻ"));
+    }
+
+    // ── Sprint C: Follow + Feed ─────────────────────────────────────────────
+    @PostMapping("/follow/{authorId}")
+    public ResponseEntity<?> toggleFollow(
+            @PathVariable Integer authorId,
+            @RequestParam Integer followerId
+    ) {
+        boolean isFollowing = forumService.toggleFollow(followerId, authorId);
+        return ResponseEntity.ok(Map.of("success", true,
+                "data", Map.of("isFollowing", isFollowing),
+                "message", isFollowing ? "Đã theo dõi" : "Đã bỏ theo dõi"));
+    }
+
+    @GetMapping("/follow/{authorId}/check")
+    public ResponseEntity<?> checkFollowing(
+            @PathVariable Integer authorId,
+            @RequestParam(required = false) Integer followerId
+    ) {
+        boolean isFollowing = forumService.isFollowing(followerId, authorId);
+        return ResponseEntity.ok(Map.of("success", true, "data", Map.of("isFollowing", isFollowing)));
+    }
+
+    @GetMapping("/feed")
+    public ResponseEntity<?> getFollowingFeed(
+            @RequestParam Integer userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        var data = forumService.getFollowingFeed(userId,
+                org.springframework.data.domain.PageRequest.of(page, size));
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
     @PutMapping("/{postId}")
     public ResponseEntity<?> updatePost(
             @PathVariable Integer postId,
