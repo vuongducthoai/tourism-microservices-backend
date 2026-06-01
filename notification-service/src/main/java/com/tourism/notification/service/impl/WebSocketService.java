@@ -22,6 +22,16 @@ public class WebSocketService {
 
     private final SimpMessagingTemplate messagingTemplate;
 
+    /** Notify admin khi có yêu cầu tư vấn mới — push lên /topic/admin/consultations */
+    public void notifyAdminConsultation(BookingEventDTO event) {
+        try {
+            messagingTemplate.convertAndSend("/topic/admin/consultations", event);
+            log.info("WebSocket pushed to /topic/admin/consultations for consultation: {}", event.getBookingCode());
+        } catch (Exception e) {
+            log.error("WebSocket admin consultation push failed for {}: {}", event.getBookingCode(), e.getMessage());
+        }
+    }
+
     /** Notify tất cả admin (dùng sau khi khách submit refund hoặc status thay đổi) */
     public void notifyAdminBookingUpdate(BookingEventDTO event) {
         try {

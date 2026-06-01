@@ -261,8 +261,46 @@ public class ForumServiceImpl implements ForumService {
             ));
         }
 
-        return forumPostRepository.findAll(spec, pageable)
+        // Sprint A: nhánh "Xu hướng" / "Nổi bật" — dùng query có time window + công thức trọng số,
+        // chỉ áp dụng khi không có filter category/tag/search để giữ raw JPQL gọn.
+        boolean noFilter = filter.getCategoryId() == null
+                && filter.getTagId() == null
+                && (filter.getPostType() == null || filter.getPostType().isEmpty())
+                && (filter.getSearch() == null || filter.getSearch().isEmpty());
+        String firstSortProp = pageable.getSort().stream()
+                .findFirst().map(o -> o.getProperty()).orElse(null);
+        if (noFilter && "viewCount".equals(firstSortProp)) {
+            // Xu hướng: bài hot trong 7 ngày
+            return forumPostRepository.findTrendingPosts(
+                    LocalDateTime.now().minusDays(7),
+                    PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()))
+                    .map(p -> mapToListResponse(p, currentUserId));
+        }
+        if (noFilter && "likeCount".equals(firstSortProp)) {
+            // Nổi bật: nhiều like + comment trong 30 ngày
+            return forumPostRepository.findPopularPosts(
+                    LocalDateTime.now().minusDays(30),
+                    PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()))
+                    .map(p -> mapToListResponse(p, currentUserId));
+        }
+
+        // Mặc định (Mới nhất / có filter): pin đầu + sort theo client
+        Pageable pageableWithPin = withPinFirst(pageable);
+        return forumPostRepository.findAll(spec, pageableWithPin)
             .map(p -> mapToListResponse(p, currentUserId));
+    }
+
+    /** Trộn sort isPinned DESC vào đầu sort hiện tại để admin pin có ý nghĩa thật. */
+    private Pageable withPinFirst(Pageable pageable) {
+        org.springframework.data.domain.Sort pinFirst =
+                org.springframework.data.domain.Sort.by(
+                        org.springframework.data.domain.Sort.Order.desc("isPinned"));
+        org.springframework.data.domain.Sort combined = pageable.getSort().isSorted()
+                ? pinFirst.and(pageable.getSort())
+                : pinFirst.and(org.springframework.data.domain.Sort.by(
+                        org.springframework.data.domain.Sort.Order.desc("createdAt")));
+        return org.springframework.data.domain.PageRequest.of(
+                pageable.getPageNumber(), pageable.getPageSize(), combined);
     }
 
     @Override
@@ -798,6 +836,71 @@ public class ForumServiceImpl implements ForumService {
     }
 
     /** Chặn user bị cấm hoạt động forum. Ban đã hết hạn → tự bỏ active. */
+    // ── Sprint A: Bookmark list ─────────────────────────────────────────────
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostListResponse> getBookmarkedPosts(Integer userId, Pageable pageable) {
+        if (userId == null) return Page.empty(pageable);
+        return postBookmarkRepository.findBookmarkedPostsByUserId(userId, pageable)
+                .map(p -> mapToListResponse(p, userId));
+    }
+
+    // ── Sprint B: Share counter ─────────────────────────────────────────────
+    @Override
+    public void recordShare(Integer postId, String channel) {
+        ForumPost post = forumPostRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found: " + postId));
+        int current = post.getShareCount() == null ? 0 : post.getShareCount();
+        post.setShareCount(current + 1);
+        forumPostRepository.save(post);
+        log.info("Post {} shared via {} (total={})", postId, channel, current + 1);
+    }
+
+    // ── Sprint C: Follow + Feed ─────────────────────────────────────────────
+    @Override
+    public boolean toggleFollow(Integer followerId, Integer authorId) {
+        if (followerId == null || authorId == null) {
+            throw new RuntimeException("Thiếu followerId hoặc authorId");
+        }
+        if (followerId.equals(authorId)) {
+            throw new RuntimeException("Không thể tự theo dõi chính mình");
+        }
+        var existing = followerRepository.findByFollowerUserIdAndFollowingUserId(followerId, authorId);
+        if (existing.isPresent()) {
+            followerRepository.delete(existing.get());
+            return false;   // đã unfollow
+        }
+        com.tourism.forum.entity.Follower f = new com.tourism.forum.entity.Follower();
+        f.setFollowerUserId(followerId);
+        f.setFollowingUserId(authorId);
+        followerRepository.save(f);
+        return true;   // vừa follow
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isFollowing(Integer followerId, Integer authorId) {
+        if (followerId == null || authorId == null) return false;
+        return followerRepository.existsByFollowerUserIdAndFollowingUserId(followerId, authorId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostListResponse> getFollowingFeed(Integer userId, Pageable pageable) {
+        if (userId == null) return Page.empty(pageable);
+        List<Integer> followingIds = followerRepository.findFollowingIdsByFollowerUserId(userId);
+        if (followingIds.isEmpty()) return Page.empty(pageable);
+
+        Specification<ForumPost> spec = (root, q, cb) -> cb.and(
+                cb.equal(root.get("status"), ContentStatus.PUBLISHED),
+                cb.or(cb.isNull(root.get("isDeleted")), cb.isFalse(root.get("isDeleted"))),
+                root.get("userId").in(followingIds)
+        );
+        Pageable pageableWithPin = withPinFirst(pageable);
+        return forumPostRepository.findAll(spec, pageableWithPin)
+                .map(p -> mapToListResponse(p, userId));
+    }
+
     @Override
     public void createReport(Integer reporterId, com.tourism.forum.dto.request.ReportRequest request) {
         if (reporterId == null) throw new RuntimeException("Bạn cần đăng nhập để báo cáo");

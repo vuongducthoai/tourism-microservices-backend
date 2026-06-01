@@ -226,4 +226,11 @@ public class NotificationServiceImpl implements NotificationService {
         log.info("Handling coupon-updated for coupon: {}", event.getCouponCode());
         webSocketService.notifyAdminCoupon(event);
     }
+
+    @Override
+    public void handleConsultationCreated(BookingEventDTO event) {
+        log.info("Handling consultation-created: code={}, from={}, tour={}",
+                event.getBookingCode(), event.getContactFullName(), event.getTourCode());
+        webSocketService.notifyAdminConsultation(event);
+    }
 }

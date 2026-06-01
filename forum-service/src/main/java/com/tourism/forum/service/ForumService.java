@@ -61,4 +61,19 @@ public interface ForumService {
     boolean checkBookmarkStatus(Integer postId, Integer userId);
 
     void createReport(Integer reporterId, com.tourism.forum.dto.request.ReportRequest request);
+
+    // Sprint A: bookmark list
+    org.springframework.data.domain.Page<PostListResponse> getBookmarkedPosts(
+            Integer userId, org.springframework.data.domain.Pageable pageable);
+
+    // Sprint B: share counter
+    void recordShare(Integer postId, String channel);
+
+    // Sprint C: follow + feed
+    boolean toggleFollow(Integer followerId, Integer authorId);
+
+    boolean isFollowing(Integer followerId, Integer authorId);
+
+    org.springframework.data.domain.Page<PostListResponse> getFollowingFeed(
+            Integer userId, org.springframework.data.domain.Pageable pageable);
 }

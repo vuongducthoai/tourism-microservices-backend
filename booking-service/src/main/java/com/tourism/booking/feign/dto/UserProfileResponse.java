@@ -12,4 +12,5 @@ public class UserProfileResponse {
     private String fullName;
     private String email;
     private BigDecimal coinBalance;
+    private String role;   // CUSTOMER | ADMIN | TOUR_OWNER — dùng cho AdminAuthInterceptor dev-token fallback
 }

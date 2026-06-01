@@ -417,6 +417,9 @@ services:
     container_name: tourism-analytics-service
     ports:
       - "8087:8087"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       - TZ=Asia/Ho_Chi_Minh
       - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
