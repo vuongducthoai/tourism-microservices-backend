@@ -19,4 +19,10 @@ public interface SepayService {
     );
 
     String generateTransferContent(String bookingCode);
+
+    /**
+     * Verify an outgoing withdrawal transfer on SePay by matching
+     * referenceCode in transaction content and amount within ±1000 VND.
+     */
+    TransactionVerificationDTO verifyWithdrawalTransaction(String referenceCode, java.math.BigDecimal amount);
 }

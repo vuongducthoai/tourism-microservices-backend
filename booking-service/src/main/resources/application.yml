@@ -70,7 +70,7 @@ sepay:
   transfer-path: /transfers
 
 transfer:
-  provider: sepay
+  provider: manual
 
 springdoc:
   api-docs:

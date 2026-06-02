@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.booking.dto.request.CoinWithdrawalRequest;
 import com.tourism.booking.dto.request.ConfirmManualPayoutRequest;
 import com.tourism.booking.dto.response.CoinWithdrawalResponse;
+import com.tourism.booking.dto.response.SepayCheckResult;
+import com.tourism.booking.dto.sepay.TransactionVerificationDTO;
 import com.tourism.booking.entity.CoinWithdrawal;
 import com.tourism.booking.entity.CoinWithdrawalErrorSource;
 import com.tourism.booking.entity.CoinWithdrawalStatus;
@@ -16,7 +18,9 @@ import com.tourism.booking.messaging.OutboxEventFactory;
 import com.tourism.booking.repository.CoinWithdrawalRepository;
 import com.tourism.booking.repository.OutboxEventRepository;
 import com.tourism.booking.service.CoinWithdrawalService;
+import com.tourism.booking.service.SepayService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -31,14 +35,15 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
 
     private static final BigDecimal MIN_WITHDRAWAL = new BigDecimal("5");
     private static final BigDecimal EXCHANGE_RATE = new BigDecimal("1000");
-
     private final CoinWithdrawalRepository coinWithdrawalRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final IamFeignClient iamFeignClient;
+    private final SepayService sepayService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -58,8 +63,8 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
         String operationKey = referenceCode + "_WITHDRAW";
         BigDecimal moneyAmount = request.getCoinAmount().multiply(EXCHANGE_RATE);
 
-        iamFeignClient.deductCoins(request.getUserId(), request.getCoinAmount(), operationKey);
-
+        // He thong hoan coin thu cong: KHONG tru coin ngay
+        // Coin chi bi tru khi admin xac nhan chuyen khoan thanh cong
         CoinWithdrawal withdrawal = coinWithdrawalRepository.save(CoinWithdrawal.builder()
                 .referenceCode(referenceCode)
                 .userId(request.getUserId())
@@ -68,14 +73,17 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
                 .bank(request.getBank())
                 .accountNumber(request.getAccountNumber())
                 .accountName(request.getAccountName())
-                .status(CoinWithdrawalStatus.PENDING)
+                .status(CoinWithdrawalStatus.MANUAL)
                 .operationKey(operationKey)
-                .note("Yeu cau da duoc tao, he thong dang xu ly")
+                .note("Yeu cau dang cho admin xu ly. Tien se duoc chuyen ve tai khoan cua ban trong 24 gio.")
                 .build());
 
-        BookingEventDTO event = toEvent(withdrawal);
-        OutboxEvent outboxEvent = OutboxEventFactory.coinWithdrawal(event, withdrawal, objectMapper);
-        outboxEventRepository.save(outboxEvent);
+        // Gui thong bao qua RabbitMQ: luu vao DB + WebSocket cho user
+        try {
+            queueWithdrawalNotification(withdrawal, "COIN_WITHDRAWAL_MANUAL", userProfile, null);
+        } catch (Exception e) {
+            log.warn("Failed to queue COIN_WITHDRAWAL_MANUAL notification for {}: {}", referenceCode, e.getMessage());
+        }
 
         return toResponse(withdrawal);
     }
@@ -108,25 +116,25 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
     @Transactional
     public void retry(Long id) {
         CoinWithdrawal withdrawal = findWithdrawal(id);
-        if (withdrawal.getStatus() != CoinWithdrawalStatus.FAILED) {
-            throw new RuntimeException("Chi cho phep retry giao dich FAILED");
+        if (withdrawal.getStatus() != CoinWithdrawalStatus.FAILED && withdrawal.getStatus() != CoinWithdrawalStatus.MANUAL) {
+            throw new RuntimeException("Chi cho phep reset giao dich FAILED hoac MANUAL");
         }
 
-        OutboxEvent event = outboxEventRepository.findByIdempotencyKey(withdrawal.getOperationKey())
-                .orElseThrow(() -> new RuntimeException("Khong tim thay outbox event cho giao dich"));
+        // Xu ly outbox neu ton tai (giao dich cu qua relay tu dong)
+        outboxEventRepository.findByIdempotencyKey(withdrawal.getOperationKey()).ifPresent(event -> {
+            event.setStatus(OutboxStatus.NEW);
+            event.setRetries(0);
+            event.setErrorMessage(null);
+            event.setLockedAt(null);
+            event.setLockedBy(null);
+            event.setSentAt(null);
+            event.setNextRetryAt(LocalDateTime.now());
+            outboxEventRepository.save(event);
+        });
 
-        event.setStatus(OutboxStatus.NEW);
-        event.setRetries(0);
-        event.setErrorMessage(null);
-        event.setLockedAt(null);
-        event.setLockedBy(null);
-        event.setSentAt(null);
-        event.setNextRetryAt(LocalDateTime.now());
-        outboxEventRepository.save(event);
-
-        withdrawal.setStatus(CoinWithdrawalStatus.PENDING);
+        withdrawal.setStatus(CoinWithdrawalStatus.MANUAL);
         withdrawal.setRetryCount(0);
-        withdrawal.setNote("Da duoc dua vao hang cho retry boi admin");
+        withdrawal.setNote("Da reset ve trang thai cho admin xu ly");
         withdrawal.setErrorSource(null);
         coinWithdrawalRepository.save(withdrawal);
     }
@@ -141,30 +149,67 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
     public CoinWithdrawalResponse confirmManualPayout(Long id, ConfirmManualPayoutRequest request) {
         CoinWithdrawal withdrawal = findWithdrawal(id);
         if (withdrawal.getStatus() != CoinWithdrawalStatus.MANUAL) {
-            throw new RuntimeException("Chi co the xac nhan chuyen khoan thu cong cho giao dich co trang thai MANUAL");
+            throw new RuntimeException("Chi co the xac nhan cho giao dich co trang thai MANUAL");
         }
 
-        String transferRef = (request.getTransferRef() != null && !request.getTransferRef().isBlank())
-                ? request.getTransferRef()
-                : "ADMIN_MANUAL_" + System.currentTimeMillis();
-        String confirmNote = (request.getNote() != null && !request.getNote().isBlank())
-                ? request.getNote()
-                : "Admin da xac nhan chuyen khoan thu cong thanh cong";
+        // Kiem tra giao dich tren SePay (quet 24h gan nhat)
+        TransactionVerificationDTO sepayResult = sepayService.verifyWithdrawalTransaction(
+                withdrawal.getReferenceCode(), withdrawal.getMoneyAmount());
+
+        if (!sepayResult.isVerified()) {
+            throw new RuntimeException(
+                "Khong tim thay giao dich phu hop trong 24 gio qua. " +
+                "Vui long thuc hien chuyen khoan va bam xac nhan lai.");
+        }
+
+        String transferRef = sepayResult.getTransactionReference();
+        log.info("SePay verified withdrawal {} with ref={}", withdrawal.getReferenceCode(), transferRef);
+
+        // Tru coin sau khi SePay xac nhan giao dich thanh cong
+        try {
+            iamFeignClient.deductCoins(withdrawal.getUserId(), withdrawal.getCoinAmount(), withdrawal.getOperationKey());
+            log.info("Deducted {} coins for user {} on withdrawal {}",
+                    withdrawal.getCoinAmount(), withdrawal.getUserId(), withdrawal.getReferenceCode());
+        } catch (Exception e) {
+            log.error("Failed to deduct coins for withdrawal {}: {}", withdrawal.getReferenceCode(), e.getMessage());
+            throw new RuntimeException("Khong the tru diem cho user. Vui long kiem tra lai: " + e.getMessage());
+        }
 
         withdrawal.setStatus(CoinWithdrawalStatus.COMPLETED);
         withdrawal.setTransferRef(transferRef);
-        withdrawal.setNote(confirmNote);
+        withdrawal.setNote("Da xac minh qua SePay: " + transferRef);
         withdrawal.setErrorSource(null);
         coinWithdrawalRepository.save(withdrawal);
 
-        // Publish notification event via RabbitMQ outbox (routes to notification-service)
-        BookingEventDTO event = toEvent(withdrawal);
-        event.setBookingCode(withdrawal.getReferenceCode()); // dùng referenceCode làm idempotency key base
-        event.setWithdrawalTransferRef(transferRef);
-        OutboxEvent outboxEvent = OutboxEventFactory.notification(event, "COIN_WITHDRAWAL", objectMapper);
-        outboxEventRepository.save(outboxEvent);
+        // Gui thong bao cho user qua outbox
+        try {
+            UserProfileResponse userProfile = iamFeignClient.getUserProfile(withdrawal.getUserId());
+            queueWithdrawalNotification(withdrawal, "COIN_WITHDRAWAL", userProfile, transferRef);
+        } catch (Exception e) {
+            log.warn("Failed to queue COIN_WITHDRAWAL notification for {}: {}", withdrawal.getReferenceCode(), e.getMessage());
+        }
 
         return toResponse(withdrawal);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public SepayCheckResult checkSepayTransaction(Long id) {
+        CoinWithdrawal withdrawal = findWithdrawal(id);
+        TransactionVerificationDTO result = sepayService.verifyWithdrawalTransaction(
+                withdrawal.getReferenceCode(), withdrawal.getMoneyAmount());
+        if (result.isVerified()) {
+            return SepayCheckResult.builder()
+                    .verified(true)
+                    .transactionReference(result.getTransactionReference())
+                    .message("Tim thay giao dich phu hop tren SePay: " + result.getTransactionReference())
+                    .build();
+        } else {
+            return SepayCheckResult.builder()
+                    .verified(false)
+                    .message("Chua tim thay giao dich khop tren SePay trong 24 gio qua. Vui long nhap ma giao dich thu cong.")
+                    .build();
+        }
     }
 
     private void validateRequest(CoinWithdrawalRequest request) {
@@ -185,6 +230,7 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
         return BookingEventDTO.builder()
                 .userId(withdrawal.getUserId())
                 .eventType("COIN_WITHDRAWAL")
+                .bookingCode(withdrawal.getReferenceCode())
                 .referenceCode(withdrawal.getReferenceCode())
                 .coinWithdrawalAmount(withdrawal.getCoinAmount())
                 .withdrawalMoneyAmount(withdrawal.getMoneyAmount())
@@ -197,6 +243,34 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
                 .build();
     }
 
+    private void queueWithdrawalNotification(CoinWithdrawal withdrawal,
+                                             String eventType,
+                                             UserProfileResponse userProfile,
+                                             String transferRef) {
+        String key = withdrawalNotificationKey(withdrawal, eventType);
+        if (outboxEventRepository.existsByIdempotencyKey(key)) {
+            log.info("Skip duplicate coin withdrawal notification outbox: key={}", key);
+            return;
+        }
+
+        BookingEventDTO event = toEvent(withdrawal);
+        event.setEventType(eventType);
+        event.setBookingCode(withdrawal.getReferenceCode());
+        event.setReferenceCode(withdrawal.getReferenceCode());
+        event.setWithdrawalTransferRef(transferRef != null ? transferRef : withdrawal.getTransferRef());
+        if (userProfile != null) {
+            event.setContactEmail(userProfile.getEmail());
+            event.setContactFullName(userProfile.getFullName());
+        }
+
+        OutboxEvent outboxEvent = OutboxEventFactory.notificationWithKey(event, eventType, key, objectMapper);
+        outboxEventRepository.save(outboxEvent);
+    }
+
+    private String withdrawalNotificationKey(CoinWithdrawal withdrawal, String eventType) {
+        return withdrawal.getReferenceCode() + "_" + eventType;
+    }
+
     private CoinWithdrawalResponse toResponse(CoinWithdrawal withdrawal) {
         return CoinWithdrawalResponse.builder()
                 .id(withdrawal.getId())
@@ -205,7 +279,7 @@ public class CoinWithdrawalServiceImpl implements CoinWithdrawalService {
                 .coinAmount(withdrawal.getCoinAmount())
                 .moneyAmount(withdrawal.getMoneyAmount())
                 .bank(withdrawal.getBank())
-                .accountNumberMasked(maskAccountNumber(withdrawal.getAccountNumber()))
+                .accountNumberMasked(withdrawal.getAccountNumber()) // Hien thi so TK day du, khong che
                 .accountName(withdrawal.getAccountName())
                 .status(withdrawal.getStatus())
                 .transferRef(withdrawal.getTransferRef())

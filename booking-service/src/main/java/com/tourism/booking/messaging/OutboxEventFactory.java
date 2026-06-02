@@ -37,6 +37,25 @@ public final class OutboxEventFactory {
     }
 
     /**
+     * Notification event with a caller-provided stable idempotency key.
+     * Used for non-booking business references such as coin withdrawals.
+     */
+    public static OutboxEvent notificationWithKey(BookingEventDTO dto,
+                                                  String eventType,
+                                                  String idempotencyKey,
+                                                  ObjectMapper mapper) {
+        dto.setEventType(eventType);
+        dto.setIdempotencyKey(idempotencyKey);
+
+        return OutboxEvent.builder()
+                .idempotencyKey(idempotencyKey)
+                .exchange(RabbitMQConfig.EXCHANGE)
+                .routingKey(RabbitMQConfig.RK_NOTIFICATION)
+                .payload(toJson(dto, mapper))
+                .build();
+    }
+
+    /**
      * Coin refund event → handled by CoinRefundRelayScheduler via Feign to IAM.
      * NOT published to RabbitMQ.
      */

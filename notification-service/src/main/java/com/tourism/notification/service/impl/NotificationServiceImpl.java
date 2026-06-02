@@ -1,20 +1,17 @@
 package com.tourism.notification.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.notification.dto.BookingEventDTO;
 import com.tourism.notification.dto.CouponEventDTO;
 import com.tourism.notification.dto.UserStatusEventDTO;
-import com.tourism.notification.entity.Notification;
 import com.tourism.notification.entity.NotificationType;
-import com.tourism.notification.repository.NotificationRepository;
 import com.tourism.notification.service.MailService;
+import com.tourism.notification.service.NotificationPersistenceService;
 import com.tourism.notification.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.Map;
 
 @Slf4j
 @Service
@@ -23,8 +20,7 @@ public class NotificationServiceImpl implements NotificationService {
 
     private final MailService            mailService;
     private final WebSocketService       webSocketService;
-    private final NotificationRepository notificationRepository;
-    private final ObjectMapper           objectMapper;
+    private final NotificationPersistenceService notificationPersistenceService;
 
     @Override
     public void handleRefundRequested(BookingEventDTO event) {
@@ -98,15 +94,7 @@ public class NotificationServiceImpl implements NotificationService {
 
     private void saveNotification(Integer userId, NotificationType type, String title, String message, String bookingCode) {
         try {
-            Notification.NotificationBuilder builder = Notification.builder()
-                    .userId(userId)
-                    .type(type)
-                    .title(title)
-                    .message(message);
-            if (bookingCode != null) {
-                builder.metadata(objectMapper.valueToTree(Map.of("bookingCode", bookingCode)));
-            }
-            notificationRepository.save(builder.build());
+            notificationPersistenceService.saveNotification(userId, type, title, message, bookingCode);
         } catch (Exception e) {
             log.error("Failed to save notification: {}", e.getMessage());
         }
@@ -156,6 +144,13 @@ public class NotificationServiceImpl implements NotificationService {
                             event.getWithdrawalAccountNumberMasked()),
                     event.getReferenceCode()
             );
+            webSocketService.notifyUserWithdrawalUpdate(event.getUserId(), event);
+        }
+
+        if (event.getContactEmail() != null) {
+            try { mailService.sendCoinWithdrawalCompletedEmail(event); } catch (Exception e) {
+                log.error("Failed to send coin withdrawal completed email for ref={}: {}", event.getReferenceCode(), e.getMessage());
+            }
         }
     }
 
@@ -184,12 +179,18 @@ public class NotificationServiceImpl implements NotificationService {
             saveNotification(
                     event.getUserId(),
                     NotificationType.COIN_WITHDRAWAL_MANUAL,
-                    "Lenh rut dang xu ly thu cong",
-                    String.format("Lenh rut %s can can thiep boi bo phan van hanh. Trang thai hien tai: %s.",
-                            event.getReferenceCode(),
-                            event.getWithdrawalStatus()),
+                    "Yeu cau rut diem da ghi nhan",
+                    String.format("Lenh rut %s da duoc ghi nhan. Admin se xu ly va chuyen khoan trong 24 gio.",
+                            event.getReferenceCode()),
                     event.getReferenceCode()
             );
+            webSocketService.notifyUserWithdrawalUpdate(event.getUserId(), event);
+        }
+
+        if (event.getContactEmail() != null) {
+            try { mailService.sendCoinWithdrawalCreatedEmail(event); } catch (Exception e) {
+                log.error("Failed to send coin withdrawal created email for ref={}: {}", event.getReferenceCode(), e.getMessage());
+            }
         }
     }
 

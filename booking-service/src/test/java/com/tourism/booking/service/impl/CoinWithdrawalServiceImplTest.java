@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.booking.dto.request.CoinWithdrawalRequest;
 import com.tourism.booking.dto.request.ConfirmManualPayoutRequest;
 import com.tourism.booking.dto.response.CoinWithdrawalResponse;
+import com.tourism.booking.dto.sepay.TransactionVerificationDTO;
 import com.tourism.booking.entity.CoinWithdrawal;
 import com.tourism.booking.entity.CoinWithdrawalStatus;
 import com.tourism.booking.entity.OutboxEvent;
@@ -12,6 +13,7 @@ import com.tourism.booking.feign.IamFeignClient;
 import com.tourism.booking.feign.dto.UserProfileResponse;
 import com.tourism.booking.repository.CoinWithdrawalRepository;
 import com.tourism.booking.repository.OutboxEventRepository;
+import com.tourism.booking.service.SepayService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,7 @@ class CoinWithdrawalServiceImplTest {
     @Mock CoinWithdrawalRepository coinWithdrawalRepository;
     @Mock OutboxEventRepository outboxEventRepository;
     @Mock IamFeignClient iamFeignClient;
+    @Mock SepayService sepayService;
     @Mock ObjectMapper objectMapper;
 
     @InjectMocks CoinWithdrawalServiceImpl service;
@@ -67,7 +70,7 @@ class CoinWithdrawalServiceImplTest {
     }
 
     @Test
-    @DisplayName("createWithdrawal deducts points, writes internal outbox, and returns masked response")
+    @DisplayName("createWithdrawal creates manual request and stable notification outbox")
     void createWithdrawal_success() {
         CoinWithdrawalRequest request = new CoinWithdrawalRequest();
         request.setUserId(15);
@@ -81,26 +84,27 @@ class CoinWithdrawalServiceImplTest {
         profile.setCoinBalance(new BigDecimal("50"));
 
         when(iamFeignClient.getUserProfile(15)).thenReturn(profile);
-        doNothing().when(iamFeignClient).deductCoins(anyInt(), any(BigDecimal.class), anyString());
 
         CoinWithdrawalResponse response = service.createWithdrawal(request);
 
-        assertThat(response.getStatus()).isEqualTo(CoinWithdrawalStatus.PENDING);
+        assertThat(response.getStatus()).isEqualTo(CoinWithdrawalStatus.MANUAL);
         assertThat(response.getMoneyAmount()).isEqualByComparingTo("10000");
-        assertThat(response.getAccountNumberMasked()).isEqualTo("******7890");
+        assertThat(response.getAccountNumberMasked()).isEqualTo("1234567890");
         assertThat(response.getReferenceCode()).startsWith("WD15");
 
         ArgumentCaptor<CoinWithdrawal> withdrawalCaptor = ArgumentCaptor.forClass(CoinWithdrawal.class);
         verify(coinWithdrawalRepository).save(withdrawalCaptor.capture());
         CoinWithdrawal savedWithdrawal = withdrawalCaptor.getValue();
         assertThat(savedWithdrawal.getOperationKey()).endsWith("_WITHDRAW");
-        assertThat(savedWithdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.PENDING);
+        assertThat(savedWithdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.MANUAL);
 
-        verify(iamFeignClient).deductCoins(15, new BigDecimal("10"), savedWithdrawal.getOperationKey());
+        verify(iamFeignClient, never()).deductCoins(anyInt(), any(BigDecimal.class), anyString());
 
         ArgumentCaptor<OutboxEvent> outboxCaptor = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outboxEventRepository).save(outboxCaptor.capture());
-        assertThat(outboxCaptor.getValue().getIdempotencyKey()).isEqualTo(savedWithdrawal.getOperationKey());
+        assertThat(outboxCaptor.getValue().getIdempotencyKey())
+                .isEqualTo(savedWithdrawal.getReferenceCode() + "_COIN_WITHDRAWAL_MANUAL");
+        assertThat(outboxCaptor.getValue().getIdempotencyKey()).doesNotStartWith("null_");
     }
 
     @Test
@@ -154,7 +158,7 @@ class CoinWithdrawalServiceImplTest {
 
         service.retry(8L);
 
-        assertThat(withdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.PENDING);
+        assertThat(withdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.MANUAL);
         assertThat(withdrawal.getRetryCount()).isEqualTo(0);
         assertThat(outboxEvent.getStatus()).isEqualTo(OutboxStatus.NEW);
         assertThat(outboxEvent.getRetries()).isEqualTo(0);
@@ -182,16 +186,26 @@ class CoinWithdrawalServiceImplTest {
                 .build();
 
         when(coinWithdrawalRepository.findById(20L)).thenReturn(Optional.of(withdrawal));
+        when(sepayService.verifyWithdrawalTransaction("WD30MANUAL001", new BigDecimal("20000")))
+                .thenReturn(TransactionVerificationDTO.builder()
+                        .verified(true)
+                        .transactionReference("FT2605ABCDE")
+                        .build());
+        UserProfileResponse profile = new UserProfileResponse();
+        profile.setUserID(30);
+        profile.setEmail("user@example.com");
+        profile.setFullName("TRAN VAN B");
+        when(iamFeignClient.getUserProfile(30)).thenReturn(profile);
+        doNothing().when(iamFeignClient).deductCoins(30, new BigDecimal("20"), "WD30MANUAL001_WITHDRAW");
 
         ConfirmManualPayoutRequest request = new ConfirmManualPayoutRequest();
-        request.setTransferRef("FT2605ABCDE");
         request.setNote("Da chuyen du tien");
 
         CoinWithdrawalResponse response = service.confirmManualPayout(20L, request);
 
         assertThat(withdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.COMPLETED);
         assertThat(withdrawal.getTransferRef()).isEqualTo("FT2605ABCDE");
-        assertThat(withdrawal.getNote()).isEqualTo("Da chuyen du tien");
+        assertThat(withdrawal.getNote()).isEqualTo("Da xac minh qua SePay: FT2605ABCDE");
         assertThat(withdrawal.getErrorSource()).isNull();
 
         assertThat(response.getStatus()).isEqualTo(CoinWithdrawalStatus.COMPLETED);
@@ -202,7 +216,7 @@ class CoinWithdrawalServiceImplTest {
         verify(outboxEventRepository).save(outboxCaptor.capture());
         OutboxEvent event = outboxCaptor.getValue();
         assertThat(event.getRoutingKey()).isEqualTo("booking.notification.event");
-        assertThat(event.getIdempotencyKey()).contains("COIN_WITHDRAWAL");
+        assertThat(event.getIdempotencyKey()).isEqualTo("WD30MANUAL001_COIN_WITHDRAWAL");
     }
 
     @Test
@@ -236,8 +250,8 @@ class CoinWithdrawalServiceImplTest {
     }
 
     @Test
-    @DisplayName("confirmManualPayout uses auto-generated transferRef when none provided")
-    void confirmManualPayout_noTransferRef_usesGeneratedRef() {
+    @DisplayName("confirmManualPayout rejects when SePay cannot verify transfer")
+    void confirmManualPayout_unverifiedTransfer_throwsException() {
         CoinWithdrawal withdrawal = CoinWithdrawal.builder()
                 .id(22L)
                 .referenceCode("WD32MAN002")
@@ -255,12 +269,16 @@ class CoinWithdrawalServiceImplTest {
                 .build();
 
         when(coinWithdrawalRepository.findById(22L)).thenReturn(Optional.of(withdrawal));
+        when(sepayService.verifyWithdrawalTransaction("WD32MAN002", new BigDecimal("5000")))
+                .thenReturn(TransactionVerificationDTO.builder().verified(false).build());
 
-        ConfirmManualPayoutRequest request = new ConfirmManualPayoutRequest(); // no transferRef
+        ConfirmManualPayoutRequest request = new ConfirmManualPayoutRequest();
 
-        service.confirmManualPayout(22L, request);
+        assertThatThrownBy(() -> service.confirmManualPayout(22L, request))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Khong tim thay giao dich");
 
-        assertThat(withdrawal.getTransferRef()).startsWith("ADMIN_MANUAL_");
-        assertThat(withdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.COMPLETED);
+        assertThat(withdrawal.getStatus()).isEqualTo(CoinWithdrawalStatus.MANUAL);
+        verify(iamFeignClient, never()).deductCoins(anyInt(), any(BigDecimal.class), anyString());
     }
 }

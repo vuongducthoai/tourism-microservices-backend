@@ -3,6 +3,7 @@ package com.tourism.booking.controller;
 import com.tourism.booking.dto.request.CoinWithdrawalRequest;
 import com.tourism.booking.dto.request.ConfirmManualPayoutRequest;
 import com.tourism.booking.dto.response.CoinWithdrawalResponse;
+import com.tourism.booking.dto.response.SepayCheckResult;
 import com.tourism.booking.service.CoinWithdrawalService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -69,12 +70,18 @@ public class CoinWithdrawalController {
     }
 
     @Operation(summary = "[Admin] Xac nhan chuyen khoan thu cong cho giao dich MANUAL",
-               description = "Admin quet QR, chuyen khoan xong roi bam xac nhan. He thong danh dau COMPLETED va gui thong bao cho user.")
+               description = "Yeu cau: SePay phai xac minh duoc giao dich hoac admin phai cung cap ma giao dich ngan hang.")
     @PostMapping("/admin/{id}/confirm-manual")
     public ResponseEntity<CoinWithdrawalResponse> confirmManualPayout(
             @PathVariable Long id,
             @RequestBody(required = false) ConfirmManualPayoutRequest request) {
         if (request == null) request = new ConfirmManualPayoutRequest();
         return ResponseEntity.ok(coinWithdrawalService.confirmManualPayout(id, request));
+    }
+
+    @Operation(summary = "[Admin] Kiem tra giao dich SePay cho lenh rut diem MANUAL")
+    @GetMapping("/admin/{id}/check-sepay")
+    public ResponseEntity<SepayCheckResult> checkSepay(@PathVariable Long id) {
+        return ResponseEntity.ok(coinWithdrawalService.checkSepayTransaction(id));
     }
 }

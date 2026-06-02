@@ -32,6 +32,7 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CoinWithdrawalRelayScheduler")
@@ -121,6 +122,11 @@ class CoinWithdrawalRelaySchedulerTest {
             assertThat(withdrawal.getTransferRef()).isEqualTo("SEP123");
             assertThat(event.getStatus()).isEqualTo(OutboxStatus.SENT);
             verify(outboxRepo).save(event);
+
+            ArgumentCaptor<OutboxEvent> outboxCaptor = ArgumentCaptor.forClass(OutboxEvent.class);
+            verify(outboxRepo, org.mockito.Mockito.atLeastOnce()).save(outboxCaptor.capture());
+            assertThat(outboxCaptor.getAllValues())
+                    .anyMatch(saved -> "WD15ABC_COIN_WITHDRAWAL".equals(saved.getIdempotencyKey()));
         }
 
         @Test
@@ -143,6 +149,11 @@ class CoinWithdrawalRelaySchedulerTest {
             assertThat(withdrawal.getErrorSource()).isEqualTo(CoinWithdrawalErrorSource.SEPAY);
             assertThat(withdrawal.getNote()).contains("rollback");
             verify(iamFeignClient).addCoins(15, new BigDecimal("10"), "WD15ABC_WITHDRAW_ROLLBACK");
+
+            ArgumentCaptor<OutboxEvent> outboxCaptor = ArgumentCaptor.forClass(OutboxEvent.class);
+            verify(outboxRepo, org.mockito.Mockito.atLeastOnce()).save(outboxCaptor.capture());
+            assertThat(outboxCaptor.getAllValues())
+                    .anyMatch(saved -> "WD15ABC_COIN_WITHDRAWAL_FAILED".equals(saved.getIdempotencyKey()));
         }
     }
 }

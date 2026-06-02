@@ -125,7 +125,7 @@ public class CoinWithdrawalRelayScheduler {
         event.markSent();
         outboxRepo.save(event);
 
-        outboxRepo.save(OutboxEventFactory.notification(toNotificationEvent(withdrawal, "COIN_WITHDRAWAL"), "COIN_WITHDRAWAL", objectMapper));
+        saveWithdrawalNotification(withdrawal, "COIN_WITHDRAWAL");
     }
 
     private void handleManual(OutboxEvent event, CoinWithdrawal withdrawal, TransferResult result) {
@@ -137,7 +137,7 @@ public class CoinWithdrawalRelayScheduler {
         event.markSent();
         outboxRepo.save(event);
 
-        outboxRepo.save(OutboxEventFactory.notification(toNotificationEvent(withdrawal, "COIN_WITHDRAWAL_MANUAL"), "COIN_WITHDRAWAL_MANUAL", objectMapper));
+        saveWithdrawalNotification(withdrawal, "COIN_WITHDRAWAL_MANUAL");
     }
 
     private void handleFailure(OutboxEvent event, CoinWithdrawal withdrawal, BookingEventDTO dto, TransferResult result) {
@@ -151,7 +151,7 @@ public class CoinWithdrawalRelayScheduler {
         if (event.getStatus() == OutboxStatus.DEAD) {
             withdrawal.setStatus(CoinWithdrawalStatus.FAILED);
             rollbackCoins(withdrawal, dto);
-            outboxRepo.save(OutboxEventFactory.notification(toNotificationEvent(withdrawal, "COIN_WITHDRAWAL_FAILED"), "COIN_WITHDRAWAL_FAILED", objectMapper));
+            saveWithdrawalNotification(withdrawal, "COIN_WITHDRAWAL_FAILED");
         } else {
             withdrawal.setStatus(CoinWithdrawalStatus.PENDING);
         }
@@ -174,6 +174,7 @@ public class CoinWithdrawalRelayScheduler {
         return BookingEventDTO.builder()
                 .userId(withdrawal.getUserId())
                 .eventType(eventType)
+                .bookingCode(withdrawal.getReferenceCode())
                 .referenceCode(withdrawal.getReferenceCode())
                 .coinWithdrawalAmount(withdrawal.getCoinAmount())
                 .withdrawalMoneyAmount(withdrawal.getMoneyAmount())
@@ -185,6 +186,20 @@ public class CoinWithdrawalRelayScheduler {
                 .withdrawalNote(withdrawal.getNote())
                 .withdrawalErrorSource(withdrawal.getErrorSource() != null ? withdrawal.getErrorSource().name() : null)
                 .build();
+    }
+
+    private void saveWithdrawalNotification(CoinWithdrawal withdrawal, String eventType) {
+        String key = withdrawal.getReferenceCode() + "_" + eventType;
+        if (outboxRepo.existsByIdempotencyKey(key)) {
+            log.info("Skip duplicate coin withdrawal notification outbox: key={}", key);
+            return;
+        }
+        outboxRepo.save(OutboxEventFactory.notificationWithKey(
+                toNotificationEvent(withdrawal, eventType),
+                eventType,
+                key,
+                objectMapper
+        ));
     }
 
     private String maskAccountNumber(String accountNumber) {

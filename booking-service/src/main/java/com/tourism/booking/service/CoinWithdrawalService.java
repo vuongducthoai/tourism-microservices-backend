@@ -3,6 +3,7 @@ package com.tourism.booking.service;
 import com.tourism.booking.dto.request.CoinWithdrawalRequest;
 import com.tourism.booking.dto.request.ConfirmManualPayoutRequest;
 import com.tourism.booking.dto.response.CoinWithdrawalResponse;
+import com.tourism.booking.dto.response.SepayCheckResult;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -21,4 +22,7 @@ public interface CoinWithdrawalService {
 
     /** Admin xác nhận đã chuyển khoản thủ công cho giao dịch MANUAL. */
     CoinWithdrawalResponse confirmManualPayout(Long id, ConfirmManualPayoutRequest request);
+
+    /** Kiểm tra giao dịch chuyển khoản cho lệnh rút điểm MANUAL trên SePay. */
+    SepayCheckResult checkSepayTransaction(Long id);
 }

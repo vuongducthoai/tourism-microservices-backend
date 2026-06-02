@@ -39,7 +39,8 @@ public class BookingEventListener {
     @RabbitListener(queues = RabbitMQConfig.QUEUE_NOTIFICATION)
     @Transactional
     public void onBookingEvent(BookingEventDTO event) {
-        String key = event.getIdempotencyKey();
+        String key = resolveProcessedKey(event);
+        String rawKey = event.getIdempotencyKey();
 
         // ── Idempotency check ─────────────────────────────────────────────────
         if (key != null && processedEventRepo.existsByIdempotencyKey(key)) {
@@ -49,6 +50,9 @@ public class BookingEventListener {
 
         log.info("Received booking event: type={}, booking={}, key={}",
                 event.getEventType(), event.getBookingCode(), key);
+        if (rawKey != null && key != null && !rawKey.equals(key)) {
+            log.info("Normalized event idempotency key: rawKey={} -> processedKey={}", rawKey, key);
+        }
 
         // ── Dispatch ──────────────────────────────────────────────────────────
         try {
@@ -103,5 +107,15 @@ public class BookingEventListener {
             // Re-throw so Spring Retry / DLQ can handle it
             throw new RuntimeException("Failed to process booking event: " + key, e);
         }
+    }
+
+    private String resolveProcessedKey(BookingEventDTO event) {
+        String eventType = event.getEventType() != null ? event.getEventType() : "";
+        if (eventType.startsWith("COIN_WITHDRAWAL")
+                && event.getReferenceCode() != null
+                && !event.getReferenceCode().isBlank()) {
+            return event.getReferenceCode() + "_" + eventType;
+        }
+        return event.getIdempotencyKey();
     }
 }
