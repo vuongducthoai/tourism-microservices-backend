@@ -40,6 +40,8 @@ public interface ForumService {
 
     void deletePost(Integer postId, Integer userId);
 
+    void changePostStatusByOwner(Integer postId, String status, Integer userId);
+
     void toggleLike(Integer postId, Integer userId);
 
     boolean checkLikeStatus(Integer postId, Integer userId);

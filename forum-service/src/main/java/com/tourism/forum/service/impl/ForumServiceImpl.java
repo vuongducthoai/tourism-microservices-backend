@@ -720,11 +720,17 @@ public class ForumServiceImpl implements ForumService {
             userId, ContentStatus.PUBLISHED, PageRequest.of(0, 1)).getTotalElements();
         long likeCount = postLikeRepository.countByUserId(userId);
         long commentCount = commentRepository.countByUserId(userId);
+        long followerCount = followerRepository.findFollowerIdsByFollowingUserId(userId).size();
+
+        // Điểm uy tín đơn giản: bài viết×5 + like nhận×2 + bình luận×1
+        long reputation = postCount * 5 + likeCount * 2 + commentCount;
 
         Map<String, Long> stats = new LinkedHashMap<>();
         stats.put("postCount", postCount);
         stats.put("likeCount", likeCount);
         stats.put("commentCount", commentCount);
+        stats.put("followerCount", followerCount);
+        stats.put("reputation", reputation);
         return stats;
     }
 
@@ -824,6 +830,35 @@ public class ForumServiceImpl implements ForumService {
 
         post.setIsDeleted(true);
         post.setDeletedAt(LocalDateTime.now());
+        forumPostRepository.save(post);
+    }
+
+    @Override
+    public void changePostStatusByOwner(Integer postId, String status, Integer userId) {
+        if (userId == null) {
+            throw new RuntimeException("Unauthorized: User not authenticated");
+        }
+        ForumPost post = forumPostRepository.findByIdAndNotDeleted(postId)
+            .orElseThrow(() -> new RuntimeException("Post not found"));
+        if (!post.getUserId().equals(userId)) {
+            throw new RuntimeException("Bạn không có quyền thay đổi bài viết này");
+        }
+        // User chỉ được tự bật/tắt giữa PUBLISHED và DRAFT (không tự gỡ HIDDEN do admin)
+        ContentStatus current = post.getStatus();
+        if (current == ContentStatus.HIDDEN || current == ContentStatus.PENDING_REVIEW) {
+            throw new RuntimeException("Bài viết đang bị kiểm duyệt, không thể đổi trạng thái");
+        }
+        ContentStatus target;
+        try {
+            target = ContentStatus.valueOf(status.toUpperCase());
+        } catch (Exception e) {
+            throw new RuntimeException("Trạng thái không hợp lệ");
+        }
+        if (target != ContentStatus.PUBLISHED && target != ContentStatus.DRAFT) {
+            throw new RuntimeException("Chỉ được chuyển giữa PUBLISHED và DRAFT");
+        }
+        post.setStatus(target);
+        post.setUpdatedAt(LocalDateTime.now());
         forumPostRepository.save(post);
     }
 
