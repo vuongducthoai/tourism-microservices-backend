@@ -140,4 +140,65 @@ public class SepayServiceImpl implements SepayService {
     public String generateTransferContent(String bookingCode) {
         return "HOANTIEN " + bookingCode.toUpperCase();
     }
+
+    @Override
+    public TransactionVerificationDTO verifyWithdrawalTransaction(String referenceCode, java.math.BigDecimal amount) {
+        try {
+            log.info("Verifying coin withdrawal on SePay for referenceCode: {}, amount: {} VND", referenceCode, amount);
+            List<SepayTransactionResponse.Transaction> transactions = getRecentTransactions();
+            log.info("SePay returned {} transactions to scan for withdrawal {}", transactions.size(), referenceCode);
+
+            LocalDateTime now = LocalDateTime.now();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+            for (SepayTransactionResponse.Transaction txn : transactions) {
+                // Only check outgoing transactions (money sent OUT from our account)
+                if (txn.getAmountOut() == null || txn.getAmountOut().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+                // Only transactions within last 24 hours
+                LocalDateTime txnDate;
+                try {
+                    txnDate = LocalDateTime.parse(txn.getTransactionDate(), formatter);
+                } catch (Exception e) {
+                    continue;
+                }
+                if (txnDate.isBefore(now.minusHours(24))) {
+                    continue;
+                }
+                String content = txn.getTransactionContent();
+                boolean contentMatch = content != null && content.toUpperCase().contains(referenceCode.toUpperCase());
+                java.math.BigDecimal difference = txn.getAmountOut().subtract(amount).abs();
+                boolean amountMatch = difference.compareTo(new java.math.BigDecimal("1000")) <= 0;
+
+                log.info("  → Txn id={} amountOut={} content=\"{}\" | contentMatch={} amountMatch={}",
+                        txn.getId(), txn.getAmountOut(), content, contentMatch, amountMatch);
+
+                if (contentMatch && amountMatch) {
+                    String ref = txn.getReferenceNumber() != null ? txn.getReferenceNumber() : txn.getId();
+                    log.info("✅ Found matching withdrawal transaction for {}: ref={}", referenceCode, ref);
+                    return TransactionVerificationDTO.builder()
+                            .bookingCode(referenceCode)
+                            .expectedAmount(amount)
+                            .verified(true)
+                            .transactionReference(ref)
+                            .transactionDate(txn.getTransactionDate())
+                            .build();
+                }
+            }
+
+            log.warn("❌ No matching withdrawal transaction found for referenceCode: {}", referenceCode);
+            return TransactionVerificationDTO.builder()
+                    .bookingCode(referenceCode)
+                    .expectedAmount(amount)
+                    .verified(false)
+                    .build();
+        } catch (Exception e) {
+            log.error("Error verifying withdrawal transaction: {}", e.getMessage());
+            return TransactionVerificationDTO.builder()
+                    .bookingCode(referenceCode)
+                    .verified(false)
+                    .build();
+        }
+    }
 }

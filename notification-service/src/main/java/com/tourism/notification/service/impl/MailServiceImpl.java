@@ -558,4 +558,99 @@ public class MailServiceImpl implements MailService {
                     event.getUserID(), e.getMessage());
         }
     }
+
+    // ── Gửi email cho user khi yêu cầu rút điểm được ghi nhận ────────────────
+    @Async
+    @Override
+    public void sendCoinWithdrawalCreatedEmail(BookingEventDTO event) {
+        if (event.getContactEmail() == null || event.getContactEmail().isBlank()) return;
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getContactEmail());
+            msg.setSubject("YÊU CẦU RÚT ĐIỂM ĐÃ ĐƯỢC GHI NHẬN: " + nvl(event.getReferenceCode()));
+
+            BigDecimal coins = event.getCoinWithdrawalAmount() != null ? event.getCoinWithdrawalAmount() : BigDecimal.ZERO;
+            BigDecimal money = event.getWithdrawalMoneyAmount() != null ? event.getWithdrawalMoneyAmount() : BigDecimal.ZERO;
+
+            String body = String.format(
+                "Kính gửi Quý khách %s,\n\n" +
+                "Hệ thống đã ghi nhận yêu cầu rút điểm của bạn. Bộ phận vận hành sẽ xử lý trong vòng 24 giờ.\n\n" +
+                "--- THÔNG TIN YÊU CẦU ---\n" +
+                "Mã tham chiếu : %s\n" +
+                "Số điểm rút   : %s điểm\n" +
+                "Số tiền quy đổi: %s VND\n\n" +
+                "--- THÔNG TIN NGÂN HÀNG ---\n" +
+                "Ngân hàng     : %s\n" +
+                "Số tài khoản  : %s\n" +
+                "Chủ tài khoản : %s\n\n" +
+                "Vui lòng không đóng tài khoản hoặc thay đổi thông tin ngân hàng trong thời gian xử lý.\n\n" +
+                "Nếu có thắc mắc, liên hệ: %s\n\n" +
+                "Trân trọng,\nFuture Travel Team",
+                nvl(event.getContactFullName()),
+                nvl(event.getReferenceCode()),
+                coins.toPlainString(),
+                VND_FMT.format(money),
+                nvl(event.getWithdrawalBank()),
+                nvl(event.getWithdrawalAccountNumberMasked()),
+                nvl(event.getWithdrawalAccountName()),
+                adminEmail
+            );
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Coin withdrawal created email sent to {} for ref {}",
+                    event.getContactEmail(), event.getReferenceCode());
+        } catch (Exception e) {
+            log.error("Failed to send withdrawal created email for ref {}: {}",
+                    event.getReferenceCode(), e.getMessage());
+        }
+    }
+
+    // ── Gửi email cho user khi lệnh rút điểm chuyển khoản thành công ─────────
+    @Async
+    @Override
+    public void sendCoinWithdrawalCompletedEmail(BookingEventDTO event) {
+        if (event.getContactEmail() == null || event.getContactEmail().isBlank()) return;
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(fromEmail);
+            msg.setTo(event.getContactEmail());
+            msg.setSubject("RÚT ĐIỂM THÀNH CÔNG: " + nvl(event.getReferenceCode()));
+
+            BigDecimal coins = event.getCoinWithdrawalAmount() != null ? event.getCoinWithdrawalAmount() : BigDecimal.ZERO;
+            BigDecimal money = event.getWithdrawalMoneyAmount() != null ? event.getWithdrawalMoneyAmount() : BigDecimal.ZERO;
+
+            String body = String.format(
+                "Kính gửi Quý khách %s,\n\n" +
+                "Lệnh rút điểm của bạn đã được chuyển khoản thành công!\n\n" +
+                "--- THÔNG TIN GIAO DỊCH ---\n" +
+                "Mã tham chiếu  : %s\n" +
+                "Mã chuyển khoản: %s\n" +
+                "Số điểm rút    : %s điểm\n" +
+                "Số tiền chuyển : %s VND\n\n" +
+                "--- NGÂN HÀNG NHẬN ---\n" +
+                "Ngân hàng      : %s\n" +
+                "Số tài khoản   : %s\n" +
+                "Chủ tài khoản  : %s\n\n" +
+                "Nếu chưa nhận được tiền sau 30 phút, vui lòng liên hệ: %s\n\n" +
+                "Trân trọng,\nFuture Travel Team",
+                nvl(event.getContactFullName()),
+                nvl(event.getReferenceCode()),
+                nvl(event.getWithdrawalTransferRef()),
+                coins.toPlainString(),
+                VND_FMT.format(money),
+                nvl(event.getWithdrawalBank()),
+                nvl(event.getWithdrawalAccountNumberMasked()),
+                nvl(event.getWithdrawalAccountName()),
+                adminEmail
+            );
+            msg.setText(body);
+            mailSender.send(msg);
+            log.info("Coin withdrawal completed email sent to {} for ref {}",
+                    event.getContactEmail(), event.getReferenceCode());
+        } catch (Exception e) {
+            log.error("Failed to send withdrawal completed email for ref {}: {}",
+                    event.getReferenceCode(), e.getMessage());
+        }
+    }
 }

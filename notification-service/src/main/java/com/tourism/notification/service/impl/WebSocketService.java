@@ -88,6 +88,17 @@ public class WebSocketService {
         }
     }
 
+    /** Notify user khi trang thai lenh rut diem thay doi (created/completed) */
+    public void notifyUserWithdrawalUpdate(Integer userId, BookingEventDTO event) {
+        if (userId == null) return;
+        try {
+            messagingTemplate.convertAndSend("/topic/user/" + userId + "/withdrawals", event);
+            log.info("WebSocket pushed to /topic/user/{}/withdrawals for ref: {}", userId, event.getReferenceCode());
+        } catch (Exception e) {
+            log.error("WebSocket withdrawal push failed for userId={}: {}", userId, e.getMessage());
+        }
+    }
+
     public void notifyUserForum(Integer userId, Object payload){
         if(userId == null) return;
         try {

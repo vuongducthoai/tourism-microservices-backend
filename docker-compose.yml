@@ -384,8 +384,8 @@ services:
       - SPRING_DATASOURCE_PASSWORD=postgres
       - EUREKA_HOST=service-discovery
       - REDIS_HOST=redis
-      - MAIL_USERNAME=trananhthu270904@gmail.com
-      - MAIL_PASSWORD=kskw auzz nimm uybc
+      - MAIL_USERNAME=tranthu270904@gmail.com
+      - MAIL_PASSWORD=nljt djst fhfp bmgn
       - ADMIN_EMAIL=22110431@student.hcmute.edu.vn
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672

@@ -37,5 +37,11 @@ public interface MailService {
 
     /** Gửi email xác thực tài khoản khi user đăng ký hoặc yêu cầu gửi lại */
     void sendVerificationEmail(VerificationEmailRequest request);
+
+    /** Gửi email xác nhận cho user khi yêu cầu rút điểm được ghi nhận (MANUAL) */
+    void sendCoinWithdrawalCreatedEmail(BookingEventDTO event);
+
+    /** Gửi email xác nhận cho user khi lệnh rút điểm đã chuyển khoản thành công (COMPLETED) */
+    void sendCoinWithdrawalCompletedEmail(BookingEventDTO event);
 }
 
