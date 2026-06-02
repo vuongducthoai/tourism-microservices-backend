@@ -254,10 +254,9 @@ public class ForumPostController {
     @PutMapping("/{postId}")
     public ResponseEntity<?> updatePost(
             @PathVariable Integer postId,
-            @Valid @RequestBody PostUpdateRequest request,
-            HttpServletRequest httpRequest
+            @RequestParam Integer userId,
+            @Valid @RequestBody PostUpdateRequest request
     ) {
-        Integer userId = extractUserIdFromToken(httpRequest);
         PostDetailResponse response = forumService.updatePost(postId, request, userId);
         return ResponseEntity.ok(Map.of("success", true, "message", "Cập nhật bài viết thành công", "data", response));
     }
@@ -265,40 +264,21 @@ public class ForumPostController {
     @DeleteMapping("/{postId}")
     public ResponseEntity<?> deletePost(
             @PathVariable Integer postId,
-            HttpServletRequest httpRequest
+            @RequestParam Integer userId
     ) {
-        Integer userId = extractUserIdFromToken(httpRequest);
         forumService.deletePost(postId, userId);
         return ResponseEntity.ok(Map.of("success", true, "message", "Xóa bài viết thành công"));
     }
 
-    private Integer extractUserIdFromToken(HttpServletRequest request) {
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            // Simple extraction for dev-token format: "dev-token-{timestamp}..."
-            // For actual userId, we need the current user context  from auth header
-            // For now, extract userId 2 as default for dev/test token
-            try {
-                // Extract number after "dev-token-"
-                String afterPrefix = token.substring(10); // Remove "dev-token-"
-                String[] parts = afterPrefix.split("-");
-                if (parts.length > 0) {
-                    // Try to parse the first numeric part as userId
-                    // If it's a timestamp, default to userId 2 for testing
-                    Long num = Long.parseLong(parts[0]);
-                    if (num > 1000000) {
-                        // Likely a timestamp, use default user 2
-                        return 2;
-                    }
-                    return num.intValue();
-                }
-            } catch (Exception e) {
-                // Default to user 2 if extraction fails
-                return 2;
-            }
-        }
-        return null;
+    // User tự bật/tắt PUBLISHED ↔ DRAFT bài viết của mình
+    @PatchMapping("/{postId}/status")
+    public ResponseEntity<?> changeStatus(
+            @PathVariable Integer postId,
+            @RequestParam Integer userId,
+            @RequestBody Map<String, String> body
+    ) {
+        forumService.changePostStatusByOwner(postId, body.get("status"), userId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã cập nhật trạng thái"));
     }
 
     // Rate-limit vi phạm → HTTP 429 với message rõ ràng

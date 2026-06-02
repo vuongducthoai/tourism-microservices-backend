@@ -333,14 +333,14 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         if (departure.getTransports() != null) {
             for (DepartureTransport t : departure.getTransports()) {
                 AdminDepartureTransportItem item = new AdminDepartureTransportItem(
-                        t.getTransportType().name(),
-                        t.getVehicleType().name(),
+                        t.getTransportType() != null ? t.getTransportType().name() : null,
+                        t.getVehicleType() != null ? t.getVehicleType().name() : null,
                         t.getVehicleName(),
                         t.getVehicleName(),
                         t.getStartPoint(),
                         t.getEndPoint(),
-                        t.getDepartTime().format(DISPLAY_FORMATTER),
-                        t.getArrivalTime().format(DISPLAY_FORMATTER)
+                        t.getDepartTime() != null ? t.getDepartTime().format(DISPLAY_FORMATTER) : null,
+                        t.getArrivalTime() != null ? t.getArrivalTime().format(DISPLAY_FORMATTER) : null
                 );
                 if (t.getTransportType() == TransportType.OUTBOUND) {
                     response.setOutboundTransport(item);
