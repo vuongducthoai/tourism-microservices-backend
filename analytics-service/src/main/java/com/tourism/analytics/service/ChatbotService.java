@@ -1038,6 +1038,47 @@ public class ChatbotService {
                     tourEntries.append("]\n");
                     addedCount++;
 
+                } else if ("TOUR_SUMMARY".equals(doc.getType())) {
+                    // Snapshot tour: tourName/tourCode/giá thấp nhất/điểm đến/duration/rating
+                    String tourName   = getString(meta, "tourName");
+                    String tourCode   = getString(meta, "tourCode");
+                    String duration   = getString(meta, "duration");
+                    String startLoc   = getString(meta, "startLocationName");
+                    String endLoc     = getString(meta, "endLocationName");
+                    double minPrice   = toDouble(meta.get("minPrice"), meta.get("salePrice"));
+                    Object avgRating  = meta.get("avgRating");
+                    Object reviewCnt  = meta.get("reviewCount");
+
+                    if (!tourName.isEmpty() && !tourCode.isEmpty()) {
+                        tourEntries.append("   [Tên tour: ").append(tourName)
+                                .append(", Mã tour: ").append(tourCode);
+                        if (!duration.isEmpty())  tourEntries.append(", Thời gian: ").append(duration);
+                        if (!startLoc.isEmpty())  tourEntries.append(", Khởi hành: ").append(startLoc);
+                        if (!endLoc.isEmpty())    tourEntries.append(", Điểm đến: ").append(endLoc);
+                        if (minPrice > 0)         tourEntries.append(", Giá từ: ").append(String.format("%,.0f", minPrice)).append(" VND");
+                        if (avgRating instanceof Number && ((Number) avgRating).doubleValue() > 0) {
+                            tourEntries.append(", Đánh giá: ").append(String.format("%.1f", ((Number) avgRating).doubleValue()));
+                            if (reviewCnt instanceof Number)
+                                tourEntries.append("/5 (").append(((Number) reviewCnt).intValue()).append(" lượt)");
+                        }
+                        tourEntries.append("]\n");
+                        addedCount++;
+                    }
+
+                } else if ("TOUR_ITINERARY_DAY".equals(doc.getType())
+                        || "TOUR_POLICY".equals(doc.getType())
+                        || "FAQ".equals(doc.getType())
+                        || "REVIEW".equals(doc.getType())) {
+                    // Các doc bổ trợ: content đã chứa text mô tả, chỉ kèm tên tour để Gemini gắn ngữ cảnh
+                    String tourName = getString(meta, "tourName");
+                    String tourCode = getString(meta, "tourCode");
+                    if (!tourName.isEmpty() || !tourCode.isEmpty()) {
+                        tourEntries.append("   [Thuộc tour: ").append(tourName);
+                        if (!tourCode.isEmpty()) tourEntries.append(" (").append(tourCode).append(")");
+                        tourEntries.append("]\n");
+                    }
+                    addedCount++;
+
                 } else if ("LOCATION".equals(doc.getType())) {
                     Object locationId = meta.get("locationID");
                     String locationName = getString(meta, "name");

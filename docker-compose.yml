@@ -305,6 +305,9 @@ services:
     container_name: tourism-payment-service
     ports:
       - "8084:8084"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       - TZ=Asia/Ho_Chi_Minh
       - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
@@ -430,7 +433,7 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - GEMINI_API_KEY=
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
 
     depends_on:
       service-discovery:

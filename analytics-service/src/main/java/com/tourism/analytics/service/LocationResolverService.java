@@ -149,6 +149,14 @@ public class LocationResolverService {
             addMatchKey(matchKeys, acronym);
         }
 
+        // Tên kép có dấu phân tách (vd "Bà Rịa - Vũng Tàu", "Phan Thiết / Mũi Né")
+        // → tách thành từng phần làm alias để query rút gọn ("vung tau") vẫn match.
+        for (String part : location.getName().split("[-/]")) {
+            String p = part.trim();
+            // bỏ qua phần quá ngắn (≤1 token & <4 ký tự) để tránh nhiễu
+            if (p.length() >= 4) addMatchKey(matchKeys, p);
+        }
+
         return new LocationCandidate(location.getLocationID(), location.getName(), matchKeys);
     }
 
@@ -159,19 +167,18 @@ public class LocationResolverService {
 
     private boolean containsTokenized(String text, String value) {
         if (value.isBlank()) return false;
-        // 1. Exact token boundary match (original behaviour)
+        // 1. Exact token boundary match — ưu tiên tuyệt đối (đã cover cụm đa-token vd "da nang")
         if ((" " + text + " ").contains(" " + value + " ")) return true;
-        // 2. Fuzzy match: split value into tokens, try each token against text tokens
-        //    Allow Levenshtein distance ≤ 2 for tokens with length ≥ 4
+        // 2. Fuzzy match — RẤT chặt: chỉ token dài ≥6 ký tự, distance ≤1.
+        //    Tên tỉnh tiếng Việt bỏ dấu rất ngắn & na ná nhau (nang↔bang, vung↔hung)
+        //    nên fuzzy lỏng gây resolve sai nghiêm trọng. Chỉ dùng cho typo từ dài.
         String[] valueTokens = value.split("\\s+");
         String[] textTokens  = text.split("\\s+");
         for (String vt : valueTokens) {
-            if (vt.length() < 4) continue; // skip very short tokens to avoid false positives
+            if (vt.length() < 6) continue;     // chỉ token dài mới fuzzy
             for (String tt : textTokens) {
-                if (tt.length() < 4) continue;
-                int dist = levenshtein(vt, tt);
-                int maxAllowed = vt.length() <= 5 ? 1 : 2; // stricter for short tokens
-                if (dist <= maxAllowed) return true;
+                if (tt.length() < 6) continue;
+                if (levenshtein(vt, tt) <= 1) return true;
             }
         }
         return false;
