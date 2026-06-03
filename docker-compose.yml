@@ -423,9 +423,18 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    dns_opt:
+      - timeout:2
+      - attempts:3
+    extra_hosts:
+      # Docker DNS on Windows can intermittently fail to resolve Pinecone,
+      # which makes chatbot tour retrieval return empty results.
+      - "api.pinecone.io:34.36.155.80"
+      - "tourism-chatbot-g2idbvy.svc.aped-4627-b74a.pinecone.io:54.88.199.204"
+      - "ingress.aped-4627-b74a.pinecone.io:54.88.199.204"
     environment:
       - TZ=Asia/Ho_Chi_Minh
-      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/analytics_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -434,6 +443,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PINECONE_ENV=${PINECONE_ENV}
+      - PINECONE_HOST=${PINECONE_HOST}
 
     depends_on:
       service-discovery:
