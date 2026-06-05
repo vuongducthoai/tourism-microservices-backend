@@ -54,6 +54,7 @@ public class ForumServiceImpl implements ForumService {
     private final com.tourism.forum.service.ForumRateLimitService rateLimitService;
     private final com.tourism.forum.repository.ForumUserRestrictionRepository restrictionRepository;
     private final com.tourism.forum.repository.ContentReportRepository reportRepository;
+    private final com.tourism.forum.service.ForumRewardService rewardService;
 
     // Simple in-memory cache cho user info (tránh Feign call lặp lại)
     private final Map<Integer, UserBriefResponse> userCache = new ConcurrentHashMap<>();
@@ -401,6 +402,11 @@ public class ForumServiceImpl implements ForumService {
                     post.setStatus(ContentStatus.HIDDEN);
                     log.info("Post blocked by AI: score={}, reason={}", mod.getScore(), mod.getReason());
                 }
+                case "OFF_TOPIC" -> {
+                    // Bài không liên quan du lịch → không cho public, đưa vào hàng chờ duyệt
+                    post.setStatus(ContentStatus.PENDING_REVIEW);
+                    log.info("Post off-topic, sent to review queue: reason={}", mod.getReason());
+                }
                 case "BORDERLINE" -> {
                     post.setStatus(ContentStatus.PENDING_REVIEW);
                     log.info("Post sent to review queue: score={}", mod.getScore());
@@ -422,7 +428,15 @@ public class ForumServiceImpl implements ForumService {
                 "Bài viết đang chờ kiểm duyệt",
                 "Chúng tôi sẽ xem xét và phản hồi sớm nhất có thể"
             );
-        }   
+        }
+            if ("OFF_TOPIC".equals(mod.getLabel())) {
+                forumEventPublisher.publishModerationEvent(
+                post.getUserId(),
+                "POST_PENDING",
+                "Bài viết chưa được đăng",
+                "Nội dung không liên quan đến du lịch nên cần admin xem xét trước khi đăng"
+            );
+        }
     }
         // ──────────────────────────────────────────────────────────────────────────
         forumPostRepository.save(post);
@@ -470,6 +484,11 @@ public class ForumServiceImpl implements ForumService {
                         .build());
                 }
             }
+        }
+
+        // ── Coin reward: bài PUBLISHED (SAFE) → xếp lịch thưởng sau 24h (fail-open) ──
+        if (ContentStatus.PUBLISHED.equals(post.getStatus())) {
+            rewardService.onPostPublished(post);
         }
 
         return mapToDetailResponse(post, request.getUserId());
@@ -531,6 +550,9 @@ public class ForumServiceImpl implements ForumService {
                 .build());
         }
         forumPostRepository.save(post);
+
+        // ── Coin reward: kiểm tra mốc like 5/20/50/100 cho tác giả (fail-open) ──
+        rewardService.onPostLikeChanged(post, userId);
     }
 
     @Override
@@ -619,6 +641,10 @@ public class ForumServiceImpl implements ForumService {
                 .parentCommentId(parentComment.getCommentID())
                 .build());
         }
+
+        // ── Coin reward: comment SAFE được duyệt → thưởng nếu đủ điều kiện (fail-open) ──
+        rewardService.onCommentPublished(post, savedComment);
+
         return withCommentModeration(mapToDetailResponse(post, request.getUserId()), mod);
     }
 
@@ -663,6 +689,9 @@ public class ForumServiceImpl implements ForumService {
                 .build());
         }
         commentRepository.save(comment);
+
+        // ── Coin reward: kiểm tra mốc like 5/15 cho tác giả comment (fail-open) ──
+        rewardService.onCommentLikeChanged(comment, userId);
     }
 
     // ── Categories ────────────────────────────────────────────────────────────────
@@ -909,6 +938,10 @@ public class ForumServiceImpl implements ForumService {
         f.setFollowerUserId(followerId);
         f.setFollowingUserId(authorId);
         followerRepository.save(f);
+
+        // ── Coin reward: thưởng người được follow — 1 lần/cặp trọn đời (fail-open) ──
+        rewardService.onNewFollow(followerId, authorId);
+
         return true;   // vừa follow
     }
 
@@ -965,6 +998,30 @@ public class ForumServiceImpl implements ForumService {
                 .status(com.tourism.forum.entity.ReportStatus.PENDING)
                 .targetPreview(preview)
                 .build());
+    }
+
+    @Override
+    public com.tourism.forum.dto.response.RestrictionStatusResponse getRestrictionStatus(Integer userId) {
+        var notRestricted = com.tourism.forum.dto.response.RestrictionStatusResponse.builder()
+                .restricted(false).build();
+        if (userId == null) return notRestricted;
+        return restrictionRepository.findFirstByUserIdAndActiveTrueOrderByCreatedAtDesc(userId)
+                .map(r -> {
+                    LocalDateTime until = r.getBannedUntil();
+                    // Ban hết hạn → tự gỡ và coi như không bị cấm
+                    if (until != null && until.isBefore(LocalDateTime.now())) {
+                        r.setActive(false);
+                        restrictionRepository.save(r);
+                        return notRestricted;
+                    }
+                    return com.tourism.forum.dto.response.RestrictionStatusResponse.builder()
+                            .restricted(true)
+                            .permanent(until == null)
+                            .bannedUntil(until)
+                            .reason(r.getReason())
+                            .build();
+                })
+                .orElse(notRestricted);
     }
 
     private void checkForumBan(Integer userId) {

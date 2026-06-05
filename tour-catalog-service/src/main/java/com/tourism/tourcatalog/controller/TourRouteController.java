@@ -1,6 +1,7 @@
 package com.tourism.tourcatalog.controller;
 
 import com.tourism.tourcatalog.dto.request.TourStopRequest;
+import com.tourism.tourcatalog.service.GeocodingService;
 import com.tourism.tourcatalog.service.ItineraryRouteService;
 import com.tourism.tourcatalog.service.TourRouteService;
 import jakarta.validation.Valid;
@@ -20,6 +21,7 @@ public class TourRouteController {
 
     private final TourRouteService tourRouteService;
     private final ItineraryRouteService itineraryRouteService;
+    private final GeocodingService geocodingService;
 
     // ── Public ────────────────────────────────────────────────────────────────
     @GetMapping("/api/tours/{tourCode}/route")
@@ -57,6 +59,13 @@ public class TourRouteController {
     public ResponseEntity<?> deleteStop(@PathVariable Integer stopId) {
         tourRouteService.deleteStop(stopId);
         return ResponseEntity.ok(Map.of("success", true, "message", "Đã xóa điểm dừng"));
+    }
+
+    /** Reverse geocoding: toạ độ → tên địa điểm gợi ý (gọi Nominatim từ backend). */
+    @GetMapping("/api/admin/tours/geocode/reverse")
+    public ResponseEntity<?> reverseGeocode(@RequestParam double lat, @RequestParam double lng) {
+        String name = geocodingService.reverse(lat, lng);
+        return ResponseEntity.ok(Map.of("success", true, "name", name == null ? "" : name));
     }
 
     @ExceptionHandler(RuntimeException.class)

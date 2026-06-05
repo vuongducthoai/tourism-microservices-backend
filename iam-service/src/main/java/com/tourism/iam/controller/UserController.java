@@ -30,6 +30,7 @@ import java.math.BigDecimal;
 public class UserController {
 
     private final UserService userService;
+    private final com.tourism.iam.repository.CoinTransactionRepository coinTransactionRepository;
 
     @Operation(summary = "Lấy thông tin người dùng theo ID", description = "Trả về đầy đủ profile: tên, email, phone, ngày sinh, avatar, số dư coin, role")
     @ApiResponses({
@@ -72,6 +73,18 @@ public class UserController {
     ) {
         userService.addCoins(userID, amount, operationKey);
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[Internal] Đối soát coin forum", description = "Endpoint nội bộ — forum-service gọi qua Feign để đối soát tổng coin thưởng forum đã cộng/thu hồi")
+    @ApiResponse(responseCode = "200", description = "Tổng coin forum đã CREDIT và REVOKE")
+    @GetMapping("/coin-stats/forum")
+    public ResponseEntity<java.util.Map<String, Object>> getForumCoinStats() {
+        BigDecimal credited = coinTransactionRepository.sumByDirectionAndKeyPrefix("CREDIT", "FORUM_%");
+        BigDecimal revoked = coinTransactionRepository.sumByDirectionAndKeyPrefix("DEBIT", "REVOKE_FORUM_%");
+        return ResponseEntity.ok(java.util.Map.of(
+                "creditedTotal", credited,
+                "revokedTotal", revoked
+        ));
     }
 
     @Operation(summary = "[Internal] Trừ coin khi dùng điểm thưởng", description = "Endpoint nội bộ — booking-service gọi qua Feign khi khách dùng điểm đặt tour")

@@ -13,4 +13,7 @@ public interface CommentLikeRepository extends JpaRepository<CommentLike, Intege
     boolean existsByCommentCommentIDAndUserId(Integer commentId, Integer userId);
 
     List<CommentLike> findByUserId(Integer userId);
+
+    // Đếm like từ NGƯỜI KHÁC (loại self-like) — dùng cho mốc thưởng coin
+    long countByCommentCommentIDAndUserIdNot(Integer commentId, Integer userId);
 }

@@ -102,35 +102,37 @@ public class ModerationServiceImpl implements ModerationService {
     private String buildPrompt(String content, String contentType) {
         String type = contentType.equals("post") ? "bài viết" : "bình luận";
         return """
-            Bạn là hệ thống kiểm duyệt nội dung cho diễn đàn du lịch Việt Nam.
-            Phân tích %s sau và đánh giá mức độ vi phạm.
+            Bạn là hệ thống kiểm duyệt nội dung cho diễn đàn DU LỊCH Việt Nam.
+            Phân tích %s sau theo HAI tiêu chí: (A) mức độ vi phạm, (B) có liên quan du lịch không.
 
             Nội dung cần kiểm tra:
             ---
             %s
             ---
 
-            Các loại vi phạm cần phát hiện:
+            (A) Các loại vi phạm cần phát hiện:
             - Ngôn từ thô tục, lăng mạ, xúc phạm cá nhân
             - Nội dung kỳ thị (chủng tộc, giới tính, tôn giáo, vùng miền)
-            - Spam, quảng cáo không liên quan đến du lịch
-            - Thông tin sai lệch nghiêm trọng về điểm đến
-            - Nội dung bạo lực hoặc đe dọa
-            - Nội dung khiêu dâm
+            - Spam, quảng cáo
+            - Nội dung bạo lực, đe dọa, khiêu dâm
+
+            (B) Chủ đề du lịch: bài viết PHẢI liên quan đến du lịch
+            (điểm đến, tour, lịch trình, ẩm thực khi đi du lịch, lưu trú, phương tiện,
+            kinh nghiệm/mẹo đi du lịch, review địa điểm...). Các nội dung KHÔNG liên quan
+            du lịch (vd: bàn về công nghệ, chính trị, mua bán đồ, tâm sự cá nhân, văn bản
+            vô nghĩa như "aaa", "test"...) → relevant = false.
 
             Trả lời ĐÚNG định dạng JSON sau:
             {
               "score": 0.0,
-              "label": "SAFE",
+              "relevant": true,
               "reason": "Nội dung bình thường về du lịch"
             }
 
-            Quy tắc score (số thập phân từ 0.0 đến 1.0):
-            - 0.0 – 0.29 → label = "SAFE"       (hoàn toàn bình thường)
-            - 0.30 – 0.69 → label = "BORDERLINE" (có dấu hiệu đáng ngờ, cần xem xét)
-            - 0.70 – 1.0  → label = "TOXIC"      (vi phạm rõ ràng)
-
-            Reason: giải thích ngắn gọn bằng tiếng Việt, tối đa 100 ký tự.
+            Quy tắc:
+            - score (0.0–1.0): mức độ vi phạm (A). 0.0–0.29 sạch, 0.30–0.69 đáng ngờ, 0.70–1.0 vi phạm rõ.
+            - relevant (true/false): bài CÓ liên quan du lịch (B) hay không.
+            - reason: giải thích ngắn gọn tiếng Việt, tối đa 100 ký tự. Nếu off-topic, ghi rõ "Không liên quan du lịch".
             """.formatted(type, content);
     }
 
@@ -162,13 +164,21 @@ public class ModerationServiceImpl implements ModerationService {
 
         double score  = result.path("score").asDouble(0.0);
         String reason = result.path("reason").asText("");
+        // relevant mặc định true để không chặn nhầm khi AI quên trả field này.
+        boolean relevant = result.path("relevant").asBoolean(true);
 
         String label;
         if (score >= toxicThreshold)  label = "TOXIC";
+        else if (!relevant)           label = "OFF_TOPIC";        // off-topic ưu tiên hơn BORDERLINE
         else if (score >= safeThreshold) label = "BORDERLINE";
         else label = "SAFE";
 
-        log.info("Moderation result: score={}, label={}, reason={}", score, label, reason);
+        // Bài off-topic cần được nhận diện ngay cả khi không "độc hại"
+        if ("OFF_TOPIC".equals(label) && (reason == null || reason.isBlank())) {
+            reason = "Nội dung không liên quan đến du lịch";
+        }
+
+        log.info("Moderation result: score={}, relevant={}, label={}, reason={}", score, relevant, label, reason);
         return ModerationResult.builder().score(score).label(label).reason(reason).build();
     }
 }

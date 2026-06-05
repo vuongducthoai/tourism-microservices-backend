@@ -12,4 +12,7 @@ public interface PostLikeRepository extends JpaRepository<PostLike, Integer> {
     boolean existsByPostPostIDAndUserId(Integer postId, Integer userId);
 
     long countByUserId(Integer userId);
+
+    // Đếm like từ NGƯỜI KHÁC (loại self-like) — dùng cho mốc thưởng coin
+    long countByPostPostIDAndUserIdNot(Integer postId, Integer userId);
 }

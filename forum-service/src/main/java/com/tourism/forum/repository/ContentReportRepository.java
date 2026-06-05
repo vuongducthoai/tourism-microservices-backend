@@ -18,4 +18,8 @@ public interface ContentReportRepository extends JpaRepository<ContentReport, Lo
     // Chống 1 user report trùng 1 nội dung nhiều lần
     boolean existsByReporterIdAndTargetTypeAndTargetId(
             Integer reporterId, ModerationAuditLog.TargetType targetType, Integer targetId);
+
+    // Có report đang chờ xử lý trên nội dung này? — hoãn thưởng coin nếu có
+    boolean existsByTargetTypeAndTargetIdAndStatus(
+            ModerationAuditLog.TargetType targetType, Integer targetId, ReportStatus status);
 }
