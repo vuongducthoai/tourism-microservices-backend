@@ -27,11 +27,34 @@ public class ForumPostController {
 
     private final ForumService forumService;
     private final ForumRateLimitService rateLimitService;
+    private final com.tourism.forum.service.ForumRewardService rewardService;
+
+    // GET /api/forum/posts/coin-summary?userId=xxx — coin đã kiếm hôm nay / trần ngày / lịch sử
+    @GetMapping("/coin-summary")
+    public ResponseEntity<?> getCoinSummary(@RequestParam(required = false) Integer userId) {
+        return ResponseEntity.ok(Map.of("success", true, "data", rewardService.getCoinSummary(userId)));
+    }
+
+    // GET /api/forum/posts/coin-history?userId=xxx&page=0&size=10 — toàn bộ lịch sử thưởng, phân trang
+    @GetMapping("/coin-history")
+    public ResponseEntity<?> getCoinHistory(
+            @RequestParam(required = false) Integer userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok(Map.of("success", true, "data", rewardService.getCoinHistory(userId, page, size)));
+    }
 
     // GET /api/forum/posts/quota?userId=xxx — số lượt còn lại trong ngày
     @GetMapping("/quota")
     public ResponseEntity<?> getQuota(@RequestParam Integer userId) {
         return ResponseEntity.ok(Map.of("success", true, "data", rateLimitService.getQuotaStatus(userId)));
+    }
+
+    // GET /api/forum/posts/my-restriction?userId=xxx — trạng thái hạn chế forum của user
+    @GetMapping("/my-restriction")
+    public ResponseEntity<?> getMyRestriction(@RequestParam(required = false) Integer userId) {
+        return ResponseEntity.ok(Map.of("success", true, "data", forumService.getRestrictionStatus(userId)));
     }
 
     @GetMapping

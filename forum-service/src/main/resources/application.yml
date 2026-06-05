@@ -98,3 +98,29 @@ forum:
     max-comments-per-day: 100     # quota comment/ngày
     max-posts-per-day: 10         # quota bài viết/ngày
 
+  # ── Chính sách thưởng coin forum (PLAN_FORUM_COIN_REWARD.md) ──
+  # 1 coin = 1.000đ — coin rút được tiền thật nên mọi con số đều thận trọng.
+  reward:
+    enabled: true                       # false = tắt toàn bộ thưởng coin forum
+    daily-cap: 6                        # trần coin/ngày/user (vượt → im lặng không cộng)
+    post-amount: 2.0                    # thưởng bài PUBLISHED giữ vững sau 24h
+    post-delay-hours: 24                # độ trễ thưởng bài (chống đăng → nhận coin → xóa)
+    max-rewarded-posts-per-day: 3       # tối đa 3 bài/ngày được thưởng
+    post-like-milestones: 5,20,50,100   # mốc like bài → +post-like-milestone-amount/mốc
+    post-like-milestone-amount: 0.5
+    comment-amount: 0.2                 # thưởng comment SAFE đủ dài
+    min-comment-length: 15              # chặn "hay quá", "ok"
+    max-rewarded-comments-per-day: 10
+    comment-like-milestones: 5,15       # mốc like comment
+    comment-like-milestone-amount: 0.2
+    follow-amount: 0.3                  # thưởng người ĐƯỢC follow (1 lần/cặp trọn đời)
+    max-follow-rewards-per-day: 10
+    daily-amount: 0.5                   # daily streak: 1 lần/ngày khi có tương tác
+    streak-bonus: 2.0                   # bonus mỗi khi chuỗi đạt bội số streak-length
+    streak-length: 7
+    schedule-interval-ms: 300000        # quét bài đủ 24h mỗi 5 phút
+    retry-interval-ms: 300000           # retry reward PENDING mỗi 5 phút
+    alert-interval-ms: 3600000          # quét rule anti-fraud sinh cảnh báo mỗi 1 giờ
+    # Lưu ý: các giá trị trên là MẶC ĐỊNH — admin có thể ghi đè runtime qua
+    # trang Admin > Coin diễn đàn > Cấu hình (lưu bảng forum_reward_configs, hiệu lực ngay)
+

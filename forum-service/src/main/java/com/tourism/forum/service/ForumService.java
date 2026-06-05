@@ -64,6 +64,9 @@ public interface ForumService {
 
     void createReport(Integer reporterId, com.tourism.forum.dto.request.ReportRequest request);
 
+    // Trạng thái hạn chế forum của user (để FE hiện banner cảnh báo)
+    com.tourism.forum.dto.response.RestrictionStatusResponse getRestrictionStatus(Integer userId);
+
     // Sprint A: bookmark list
     org.springframework.data.domain.Page<PostListResponse> getBookmarkedPosts(
             Integer userId, org.springframework.data.domain.Pageable pageable);

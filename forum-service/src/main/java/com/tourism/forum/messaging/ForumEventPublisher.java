@@ -4,6 +4,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 
+import com.tourism.forum.dto.event.CoinRewardEvent;
 import com.tourism.forum.dto.event.ForumNotificationEvent;
 
 import lombok.RequiredArgsConstructor;
@@ -52,5 +53,23 @@ public class ForumEventPublisher {
           // Non-critical: notification thất bại không được làm hỏng like/comment
             log.warn("Failed to publish forum event (non-critical): {}", e.getMessage());
        }
+    }
+
+    /**
+     * Gửi event cộng coin sang iam-service (routing key "forum.coin.reward").
+     * @return true nếu publish thành công — caller dùng để set status CREDITED/PENDING.
+     *         KHÔNG throw: lỗi thưởng coin không được làm fail hành động forum.
+     */
+    public boolean publishCoinReward(CoinRewardEvent event) {
+        try {
+            rabbitTemplate.convertAndSend(EXCHANGE, "forum.coin.reward", event);
+            log.info("Published coin reward: key={}, userId={}, amount={}",
+                    event.getOperationKey(), event.getUserId(), event.getAmount());
+            return true;
+        } catch (Exception e) {
+            log.warn("Failed to publish coin reward (will retry via scheduler): key={}, error={}",
+                    event.getOperationKey(), e.getMessage());
+            return false;
+        }
     }
 }

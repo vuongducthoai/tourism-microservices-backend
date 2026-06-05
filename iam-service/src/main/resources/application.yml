@@ -54,6 +54,15 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:tourism}
     password: ${RABBITMQ_PASSWORD:tourism123}
+    listener:
+      simple:
+        # Consumer forum.coin.reward: retry 3 lần rồi đẩy sang DLQ (không requeue vô hạn)
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 2s
+          multiplier: 2
+        default-requeue-rejected: false
 
   # ─── OAuth2 Resource Server (validate Keycloak JWT) ───
   security:

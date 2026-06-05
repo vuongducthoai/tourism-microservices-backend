@@ -96,6 +96,24 @@ public class ForumEventListener {
                             event.getActorName(), event.getPostTitle());
                     break;
 
+                case "COIN_REWARD":
+                    type    = NotificationType.COIN_REWARD;
+                    title   = "Bạn nhận được coin từ diễn đàn 🎉";
+                    message = String.format("Bạn nhận được +%s coin. %s",
+                            event.getCoinAmount() != null
+                                ? event.getCoinAmount().stripTrailingZeros().toPlainString() : "?",
+                            event.getPostTitle() != null ? event.getPostTitle() : "");
+                    break;
+
+                case "COIN_REVOKED":
+                    type    = NotificationType.COIN_REVOKED;
+                    title   = "Coin thưởng diễn đàn bị thu hồi";
+                    message = String.format("%s coin thưởng từ diễn đàn đã bị thu hồi. Lý do: %s",
+                            event.getCoinAmount() != null
+                                ? event.getCoinAmount().stripTrailingZeros().toPlainString() : "Một phần",
+                            event.getPostTitle() != null ? event.getPostTitle() : "Vi phạm chính sách");
+                    break;
+
                 default:
                     log.warn("Unknown forum event type: {}", event.getEventType());
                     return;
@@ -108,8 +126,9 @@ public class ForumEventListener {
                 metadata.put("actorUserId", event.getActorUserId());
                 metadata.put("actorName", event.getActorName());
                 metadata.put("actorAvatar", event.getActorAvatar());
-                metadata.put("commentId", event.getCommentId());    
+                metadata.put("commentId", event.getCommentId());
                 metadata.put("parentCommentId", event.getParentCommentId());
+                metadata.put("coinAmount", event.getCoinAmount());
 
                Notification saved = notificationRepository.save(
                     Notification.builder()

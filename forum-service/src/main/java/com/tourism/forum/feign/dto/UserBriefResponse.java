@@ -9,4 +9,5 @@ public class UserBriefResponse {
     private String email;
     private String avatar;
     private String role;
+    private java.math.BigDecimal coinBalance; // dùng cho thu hồi coin (clawback)
 }

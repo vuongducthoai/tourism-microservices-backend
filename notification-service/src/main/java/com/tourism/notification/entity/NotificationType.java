@@ -38,4 +38,9 @@ public enum NotificationType {
     COMMENT_LIKED,
     NEW_POST_FROM_FOLLOWING,
 
+    // Thưởng coin khi tương tác forum (PLAN_FORUM_COIN_REWARD)
+    COIN_REWARD,
+    // Admin thu hồi coin thưởng forum (PLAN_ADMIN_FORUM_COIN)
+    COIN_REVOKED,
+
 }
