@@ -88,13 +88,20 @@ public class GeminiAIServiceImpl implements GeminiAIService {
     @Override
     public DashboardStatsDTO.AIAnalysis generateFullAnalysis(String context) {
         String prompt = String.format(
-                "Bạn là chuyên gia phân tích dữ liệu du lịch. Dựa trên dữ liệu:\n%s\n\n" +
-                "Hãy trả về một JSON object duy nhất với cấu trúc sau (không dùng Markdown block, chỉ JSON thuần):\n" +
-                "{\"summary\": \"Tóm tắt 4-5 câu về tình hình kinh doanh bằng tiếng Việt\",\n" +
-                "\"insights\": [{\"title\":\"...\",\"description\":\"...\",\"type\":\"POSITIVE|NEUTRAL|NEGATIVE\",\"priority\":1-5}],\n" +
-                "\"predictions\": [{\"metric\":\"...\",\"prediction\":\"...\",\"confidence\":0-100,\"timeframe\":\"...\"}],\n" +
-                "\"recommendations\": [{\"title\":\"...\",\"description\":\"...\",\"action\":\"...\",\"impact\":1-5}]}\n" +
-                "insights: 3-5 items, predictions: 2-3 items, recommendations: 3-5 items. Tất cả bằng tiếng Việt.",
+                "Bạn là chuyên gia phân tích kinh doanh du lịch cho quản trị viên không rành kỹ thuật.\n" +
+                "Dữ liệu hệ thống:\n%s\n\n" +
+                "QUY TẮC BẮT BUỘC:\n" +
+                "1. Chỉ được dùng số liệu có trong AI_EVIDENCE_METRICS, không tự bịa số mới.\n" +
+                "2. Mỗi nhận định, dự báo và khuyến nghị phải có usedMetricKeys trỏ tới metricKey đã dùng.\n" +
+                "3. Nếu không có số liệu chứng minh, để usedMetricKeys=[] và viết thận trọng.\n" +
+                "4. Không dùng chữ mơ hồ như 'kỳ này' hoặc 'kỳ trước'. Hãy dùng 'giai đoạn đang xem' và 'giai đoạn so sánh'.\n" +
+                "5. Viết như báo cáo nghiệp vụ: nói vấn đề, con số chứng minh, ảnh hưởng tới doanh thu/khách hàng/vận hành.\n\n" +
+                "Trả về đúng một JSON object, không Markdown, không giải thích ngoài JSON:\n" +
+                "{\"summary\":\"Tóm tắt 4-5 câu dễ hiểu, có nêu số liệu chính\",\n" +
+                "\"insights\":[{\"title\":\"...\",\"description\":\"...\",\"type\":\"POSITIVE|NEUTRAL|NEGATIVE\",\"priority\":1-5,\"usedMetricKeys\":[\"metric.key\"]}],\n" +
+                "\"predictions\":[{\"metric\":\"...\",\"prediction\":\"...\",\"confidence\":0-100,\"timeframe\":\"...\",\"usedMetricKeys\":[\"metric.key\"]}],\n" +
+                "\"recommendations\":[{\"title\":\"...\",\"description\":\"...\",\"action\":\"...\",\"impact\":1-5,\"usedMetricKeys\":[\"metric.key\"]}]}\n" +
+                "Số lượng: insights 3-5, predictions 2-3, recommendations 3-5. Tất cả bằng tiếng Việt có dấu.",
                 context
         );
         String jsonResponse = callGeminiAPI(prompt);

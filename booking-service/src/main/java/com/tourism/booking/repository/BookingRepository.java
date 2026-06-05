@@ -33,6 +33,17 @@ public interface BookingRepository extends JpaRepository<Booking, Integer>, Book
     @Query("SELECT SUM(b.totalPrice) FROM Booking b WHERE b.bookingStatus = :status AND (b.isDeleted = false OR b.isDeleted IS NULL)")
     BigDecimal sumTotalPriceByStatus(@Param("status") BookingStatus status);
 
+    @Query("""
+            SELECT SUM(b.totalPrice)
+            FROM Booking b
+            WHERE b.bookingDate >= :start AND b.bookingDate < :end
+              AND b.bookingStatus = :status
+              AND (b.isDeleted = false OR b.isDeleted IS NULL)
+            """)
+    BigDecimal sumTotalPriceByStatusBetween(@Param("status") BookingStatus status,
+                                            @Param("start") LocalDateTime start,
+                                            @Param("end") LocalDateTime end);
+
     @Query("SELECT SUM(b.totalPrice) FROM Booking b WHERE b.bookingDate BETWEEN :start AND :end AND b.bookingStatus = :status AND (b.isDeleted = false OR b.isDeleted IS NULL)")
     BigDecimal sumRevenueByDateAndStatus(@Param("start") LocalDateTime start,
                                          @Param("end") LocalDateTime end,
@@ -59,9 +70,39 @@ public interface BookingRepository extends JpaRepository<Booking, Integer>, Book
             """)
     List<Object[]> getBookingStatusDistribution();
 
+    @Query("""
+            SELECT CAST(b.bookingStatus AS string), COUNT(b), SUM(b.totalPrice)
+            FROM Booking b
+            WHERE b.bookingDate >= :start AND b.bookingDate < :end
+              AND (b.isDeleted = false OR b.isDeleted IS NULL)
+            GROUP BY b.bookingStatus
+            """)
+    List<Object[]> getBookingStatusDistributionBetween(@Param("start") LocalDateTime start,
+                                                       @Param("end") LocalDateTime end);
+
     Long countByBookingStatus(BookingStatus status);
 
     Long countByBookingDateBetween(LocalDateTime start, LocalDateTime end);
+
+    @Query("""
+            SELECT COUNT(b)
+            FROM Booking b
+            WHERE b.bookingDate >= :start AND b.bookingDate < :end
+              AND (b.isDeleted = false OR b.isDeleted IS NULL)
+            """)
+    Long countActiveBookingsBetween(@Param("start") LocalDateTime start,
+                                    @Param("end") LocalDateTime end);
+
+    @Query("""
+            SELECT COUNT(b)
+            FROM Booking b
+            WHERE b.bookingDate >= :start AND b.bookingDate < :end
+              AND b.bookingStatus = :status
+              AND (b.isDeleted = false OR b.isDeleted IS NULL)
+            """)
+    Long countByBookingStatusBetween(@Param("status") BookingStatus status,
+                                     @Param("start") LocalDateTime start,
+                                     @Param("end") LocalDateTime end);
 
     List<Booking> findTop5ByBookingStatusOrderByCreatedAtDesc(BookingStatus status);
 
@@ -74,6 +115,20 @@ public interface BookingRepository extends JpaRepository<Booking, Integer>, Book
             ORDER BY COUNT(b) DESC, SUM(b.totalPrice) DESC
             """)
     List<Object[]> getTopDeparturesByBookingCount(@Param("status") BookingStatus status, Pageable pageable);
+
+    @Query("""
+            SELECT b.departureId, COUNT(b), SUM(b.totalPrice)
+            FROM Booking b
+            WHERE b.bookingDate >= :start AND b.bookingDate < :end
+              AND b.bookingStatus = :status
+              AND (b.isDeleted = false OR b.isDeleted IS NULL)
+            GROUP BY b.departureId
+            ORDER BY COUNT(b) DESC, SUM(b.totalPrice) DESC
+            """)
+    List<Object[]> getTopDeparturesByBookingCountBetween(@Param("status") BookingStatus status,
+                                                         @Param("start") LocalDateTime start,
+                                                         @Param("end") LocalDateTime end,
+                                                         Pageable pageable);
 
     @Query("""
             SELECT b.departureId, COUNT(b)

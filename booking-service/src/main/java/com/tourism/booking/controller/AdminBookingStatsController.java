@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,8 +50,8 @@ public class AdminBookingStatsController {
         LocalDate today = LocalDate.now();
         LocalDate rangeEnd = (to != null) ? LocalDate.parse(to, DATE_FMT) : today;
         LocalDate rangeStart = (from != null) ? LocalDate.parse(from, DATE_FMT) : rangeEnd.minusDays(30);
-        long daysBetween = rangeEnd.toEpochDay() - rangeStart.toEpochDay();
-        LocalDate prevStart = rangeStart.minusDays(daysBetween);
+        long daysInRange = ChronoUnit.DAYS.between(rangeStart, rangeEnd.plusDays(1));
+        LocalDate prevStart = rangeStart.minusDays(daysInRange);
 
         LocalDateTime todayStart = today.atStartOfDay();
         LocalDateTime tomorrowStart = today.plusDays(1).atStartOfDay();
@@ -59,22 +60,22 @@ public class AdminBookingStatsController {
         LocalDateTime rangeEndDT = rangeEnd.plusDays(1).atStartOfDay();
         LocalDateTime prevStartDT = prevStart.atStartOfDay();
 
-        // ── Booking counts ──
-        Long totalBookings = bookingRepository.count();
-        Long paidBookings = safe(bookingRepository.countByBookingStatus(BookingStatus.PAID));
-        Long pendingConfirmation = safe(bookingRepository.countByBookingStatus(BookingStatus.PENDING_CONFIRMATION));
-        Long pendingPayment = safe(bookingRepository.countByBookingStatus(BookingStatus.PENDING_PAYMENT));
-        Long pendingRefund = safe(bookingRepository.countByBookingStatus(BookingStatus.PENDING_REFUND));
-        Long cancelledBookings = safe(bookingRepository.countByBookingStatus(BookingStatus.CANCELLED));
+        // ── Booking counts in selected dashboard range ──
+        Long totalBookings = safe(bookingRepository.countActiveBookingsBetween(rangeStartDT, rangeEndDT));
+        Long paidBookings = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PAID, rangeStartDT, rangeEndDT));
+        Long pendingConfirmation = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PENDING_CONFIRMATION, rangeStartDT, rangeEndDT));
+        Long pendingPayment = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PENDING_PAYMENT, rangeStartDT, rangeEndDT));
+        Long pendingRefund = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PENDING_REFUND, rangeStartDT, rangeEndDT));
+        Long cancelledBookings = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.CANCELLED, rangeStartDT, rangeEndDT));
         Long todayBookings = safe(bookingRepository.countByBookingDateBetween(todayStart, tomorrowStart));
         Long thisWeekBookings = safe(bookingRepository.countByBookingDateBetween(weekAgoStart, tomorrowStart));
 
-        // ── Revenue (all-time total, but period-scoped for thisMonth/lastMonth) ──
+        // ── Revenue ──
         BigDecimal totalRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatus(BookingStatus.PAID));
-        BigDecimal pendingConfirmRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatus(BookingStatus.PENDING_CONFIRMATION));
-        BigDecimal pendingPayRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatus(BookingStatus.PENDING_PAYMENT));
-        BigDecimal pendingRefundRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatus(BookingStatus.PENDING_REFUND));
-        BigDecimal cancelledRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatus(BookingStatus.CANCELLED));
+        BigDecimal pendingConfirmRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.PENDING_CONFIRMATION, rangeStartDT, rangeEndDT));
+        BigDecimal pendingPayRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.PENDING_PAYMENT, rangeStartDT, rangeEndDT));
+        BigDecimal pendingRefundRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.PENDING_REFUND, rangeStartDT, rangeEndDT));
+        BigDecimal cancelledRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.CANCELLED, rangeStartDT, rangeEndDT));
         BigDecimal todayRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(todayStart, tomorrowStart, BookingStatus.PAID));
         BigDecimal thisWeekRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(weekAgoStart, tomorrowStart, BookingStatus.PAID));
         BigDecimal thisMonthRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(rangeStartDT, rangeEndDT, BookingStatus.PAID));
@@ -84,10 +85,10 @@ public class AdminBookingStatsController {
         List<DailyRevenueItem> dailyRevenue = buildDailyRevenue(rangeStartDT, rangeEndDT);
 
         // ── Status distribution 
-        List<BookingStatusCountItem> statusDistribution = buildStatusDistribution();
+        List<BookingStatusCountItem> statusDistribution = buildStatusDistribution(rangeStartDT, rangeEndDT);
 
-        // ── Hot tours (top 5 PAID)
-        List<HotTourRawItem> hotTours = buildHotTours();
+        // ── Hot tours in selected range (top 5 PAID)
+        List<HotTourRawItem> hotTours = buildHotTours(rangeStartDT, rangeEndDT);
 
         // ── Tours needing attention ──
         List<TourAttentionRawItem> toursNeedingAttention = buildToursNeedingAttention();
@@ -142,8 +143,8 @@ public class AdminBookingStatsController {
         return result;
     }
 
-    private List<BookingStatusCountItem> buildStatusDistribution() {
-        return bookingRepository.getBookingStatusDistribution().stream()
+    private List<BookingStatusCountItem> buildStatusDistribution(LocalDateTime start, LocalDateTime end) {
+        return bookingRepository.getBookingStatusDistributionBetween(start, end).stream()
                 .map(r -> BookingStatusCountItem.builder()
                         .status((String) r[0])
                         .count(((Number) r[1]).longValue())
@@ -152,9 +153,9 @@ public class AdminBookingStatsController {
                 .collect(Collectors.toList());
     }
 
-    private List<HotTourRawItem> buildHotTours() {
-        List<Object[]> rows = bookingRepository.getTopDeparturesByBookingCount(
-                BookingStatus.PAID, PageRequest.of(0, 10));
+    private List<HotTourRawItem> buildHotTours(LocalDateTime start, LocalDateTime end) {
+        List<Object[]> rows = bookingRepository.getTopDeparturesByBookingCountBetween(
+                BookingStatus.PAID, start, end, PageRequest.of(0, 10));
 
         List<HotTourRawItem> result = new ArrayList<>();
         for (Object[] row : rows) {
