@@ -31,6 +31,7 @@ public class TourChatbotSyncResponse {
     private Integer reviewCount;
 
     private List<DepartureSyncResponse> departures;
+    private List<ItineraryDaySyncResponse> itineraryDays;
 
     @Data
     @NoArgsConstructor
@@ -46,5 +47,44 @@ public class TourChatbotSyncResponse {
         private String  couponCode;
         private String  couponStartDate;
         private String  couponEndDate;
+        private List<PricingSyncResponse> pricings;
+        private List<TransportSyncResponse> transports;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class PricingSyncResponse {
+        private String passengerType;
+        private String ageDescription;
+        private Double salePrice;
+        private Double originalPrice;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class TransportSyncResponse {
+        private String transportType;
+        private String vehicleType;
+        private String vehicleName;
+        private String startPoint;
+        private String endPoint;
+        private String departTime;
+        private String arrivalTime;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class ItineraryDaySyncResponse {
+        private Integer itineraryDayID;
+        private Integer dayNumber;
+        private String title;
+        private String details;
+        private String meals;
     }
 }

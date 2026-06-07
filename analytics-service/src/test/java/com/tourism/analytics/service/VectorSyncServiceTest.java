@@ -63,18 +63,19 @@ class VectorSyncServiceTest {
     // ─────────────────────────────────────────────
 
     @Test
-    void syncAllTours_tourWithOneFutureDeparture_upsertsTwo() {
+    void syncAllTours_tourWithOneFutureDeparture_upsertsFactDocsToo() {
         // Arrange: 1 tour + 1 future departure
         TourSyncDTO.DepartureSyncDTO dep = new TourSyncDTO.DepartureSyncDTO(
                 10, "2030-06-15", 5, 2500000.0, 3000000.0,
-                null, null, null, null);
+                null, null, null, null,
+                List.of(), List.of());
 
         TourSyncDTO tour = new TourSyncDTO(
                 1, "HN001", "Tour Hà Nội 3N2Đ", "3 ngày 2 đêm", "Máy bay",
                 "Hà Nội", 1, "Đà Nẵng", 2,
                 "Hoàn Kiếm, Hồ Tây", "Sáng + Tối", "4 sao",
                 "https://img.com/hn.jpg", 4.5, 10,
-                List.of(dep));
+                List.of(dep), List.of());
 
         when(tourCatalogFeignClient.getAllToursForChatbotSync()).thenReturn(List.of(tour));
         when(vectorService.createEmbedding(anyString())).thenReturn(List.of(0.1f, 0.2f));
@@ -82,9 +83,9 @@ class VectorSyncServiceTest {
         // Act
         int count = vectorSyncService.syncAllTours();
 
-        // Assert: 1 TOUR_SUMMARY + 1 TOUR_DEPARTURE = 2 upserts
-        assertThat(count).isEqualTo(2);
-        verify(vectorService, times(2)).upsertVector(any());
+        // Assert: old docs stay, additional fact docs are synced too
+        assertThat(count).isEqualTo(5);
+        verify(vectorService, times(5)).upsertVector(any());
     }
 
     @Test
@@ -95,7 +96,7 @@ class VectorSyncServiceTest {
                 "Hà Nội", 1, "Hạ Long", 3,
                 "Vịnh Hạ Long", null, null,
                 null, null, null,
-                List.of());
+                List.of(), List.of());
 
         when(tourCatalogFeignClient.getAllToursForChatbotSync()).thenReturn(List.of(tour));
         when(vectorService.createEmbedding(anyString())).thenReturn(List.of()); // empty!

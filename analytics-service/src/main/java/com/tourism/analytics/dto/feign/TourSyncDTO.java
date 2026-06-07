@@ -31,6 +31,7 @@ public class TourSyncDTO {
     private Integer reviewCount;
 
     private List<DepartureSyncDTO> departures;
+    private List<ItineraryDaySyncDTO> itineraryDays;
 
     @Data
     @NoArgsConstructor
@@ -46,5 +47,41 @@ public class TourSyncDTO {
         private String  couponCode;
         private String  couponStartDate;
         private String  couponEndDate;
+        private List<PricingSyncDTO> pricings;
+        private List<TransportSyncDTO> transports;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PricingSyncDTO {
+        private String passengerType;
+        private String ageDescription;
+        private Double salePrice;
+        private Double originalPrice;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class TransportSyncDTO {
+        private String transportType;
+        private String vehicleType;
+        private String vehicleName;
+        private String startPoint;
+        private String endPoint;
+        private String departTime;
+        private String arrivalTime;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ItineraryDaySyncDTO {
+        private Integer itineraryDayID;
+        private Integer dayNumber;
+        private String title;
+        private String details;
+        private String meals;
     }
 }

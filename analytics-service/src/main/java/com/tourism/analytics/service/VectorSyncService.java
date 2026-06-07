@@ -71,6 +71,9 @@ public class VectorSyncService {
             int count = 0;
             for (TourSyncDTO tour : tours) {
                 count += syncTourSummary(tour);
+                count += syncTourAmenities(tour);
+                count += syncTourItineraryDays(tour);
+                count += syncTourStartLocation(tour);
                 count += syncTourDepartures(tour);
             }
             log.info("✅ Tours synced: {} total documents", count);
@@ -224,6 +227,7 @@ public class VectorSyncService {
         int count = 0;
         for (TourSyncDTO.DepartureSyncDTO dep : tour.getDepartures()) {
             count += syncOneDeparture(tour, dep);
+            count += syncOneDepartureFull(tour, dep);
         }
         return count;
     }
@@ -312,6 +316,191 @@ public class VectorSyncService {
     // ─────────────────────────────────────────────
     // INTERNAL — LOCATION
     // ─────────────────────────────────────────────
+
+    // Additional tour fact documents. Existing TOUR_SUMMARY and TOUR_DEPARTURE stay unchanged.
+    private int syncTourAmenities(TourSyncDTO tour) {
+        try {
+            if (!hasText(tour.getMeals()) && !hasText(tour.getHotel()) && !hasText(tour.getAttractions())) return 0;
+
+            String content = buildAmenityContent(tour);
+            String docId = "TOUR_AMENITY_" + tour.getTourID();
+
+            Map<String, Object> meta = baseTourMeta(tour);
+            meta.put("attractions", nvl(tour.getAttractions()));
+            meta.put("meals", nvl(tour.getMeals()));
+            meta.put("hotel", nvl(tour.getHotel()));
+            meta.put("minPrice", findMinPrice(tour));
+
+            List<Float> embedding = vectorService.createEmbedding(content);
+            if (embedding.isEmpty()) return 0;
+
+            vectorService.upsertVector(VectorDocumentDTO.builder()
+                    .id(docId)
+                    .content(content)
+                    .type("TOUR_AMENITY")
+                    .entityId(tour.getTourID())
+                    .embedding(embedding)
+                    .metadata(gson.toJson(meta))
+                    .build());
+            return 1;
+        } catch (Exception e) {
+            log.error("Error syncing tour amenity {}: {}", tour.getTourCode(), e.getMessage());
+            return 0;
+        }
+    }
+
+    private int syncTourItineraryDays(TourSyncDTO tour) {
+        if (tour.getItineraryDays() == null) return 0;
+        int count = 0;
+        for (TourSyncDTO.ItineraryDaySyncDTO day : tour.getItineraryDays()) {
+            if (day == null || (!hasText(day.getTitle()) && !hasText(day.getDetails()))) continue;
+            try {
+                String content = buildItineraryContent(tour, day);
+                Integer entityId = day.getItineraryDayID() != null ? day.getItineraryDayID() : tour.getTourID();
+                String docId = day.getItineraryDayID() != null
+                        ? "TOUR_ITINERARY_DAY_" + day.getItineraryDayID()
+                        : "TOUR_ITINERARY_DAY_" + tour.getTourID() + "_" + day.getDayNumber();
+
+                Map<String, Object> meta = baseTourMeta(tour);
+                meta.put("itineraryDayID", day.getItineraryDayID());
+                meta.put("dayNumber", day.getDayNumber() != null ? day.getDayNumber() : 0);
+                meta.put("title", nvl(day.getTitle()));
+                meta.put("meals", nvl(day.getMeals()));
+
+                List<Float> embedding = vectorService.createEmbedding(content);
+                if (embedding.isEmpty()) continue;
+
+                vectorService.upsertVector(VectorDocumentDTO.builder()
+                        .id(docId)
+                        .content(content)
+                        .type("TOUR_ITINERARY_DAY")
+                        .entityId(entityId)
+                        .embedding(embedding)
+                        .metadata(gson.toJson(meta))
+                        .build());
+                count++;
+            } catch (Exception e) {
+                log.error("Error syncing itinerary day {} for {}: {}", day.getDayNumber(), tour.getTourCode(), e.getMessage());
+            }
+        }
+        return count;
+    }
+
+    private int syncTourStartLocation(TourSyncDTO tour) {
+        try {
+            if (!hasText(tour.getStartLocationName())) return 0;
+
+            String content = buildStartLocationContent(tour);
+            String docId = "TOUR_START_LOCATION_" + tour.getTourID();
+
+            Map<String, Object> meta = baseTourMeta(tour);
+            meta.put("minPrice", findMinPrice(tour));
+            meta.put("departureDates", buildDepartureDates(tour));
+            meta.put("startAliases", buildStartAliases(tour.getStartLocationName()));
+
+            List<Float> embedding = vectorService.createEmbedding(content);
+            if (embedding.isEmpty()) return 0;
+
+            vectorService.upsertVector(VectorDocumentDTO.builder()
+                    .id(docId)
+                    .content(content)
+                    .type("TOUR_START_LOCATION")
+                    .entityId(tour.getTourID())
+                    .embedding(embedding)
+                    .metadata(gson.toJson(meta))
+                    .build());
+            return 1;
+        } catch (Exception e) {
+            log.error("Error syncing tour start location {}: {}", tour.getTourCode(), e.getMessage());
+            return 0;
+        }
+    }
+
+    private int syncOneDepartureFull(TourSyncDTO tour, TourSyncDTO.DepartureSyncDTO dep) {
+        try {
+            String content = buildDepartureFullContent(tour, dep);
+            String docId = "TOUR_DEPARTURE_FULL_" + dep.getDepartureID();
+
+            Map<String, Object> meta = baseTourMeta(tour);
+            meta.put("departureID", dep.getDepartureID());
+            meta.put("departureDate", nvl(dep.getDepartureDate()));
+            meta.put("availableSlots", dep.getAvailableSlots() != null ? dep.getAvailableSlots() : 0);
+            meta.put("salePrice", dep.getAdultSalePrice() != null ? dep.getAdultSalePrice() : 0.0);
+            meta.put("originalPrice", dep.getAdultOriginalPrice() != null ? dep.getAdultOriginalPrice() : 0.0);
+            meta.put("attractions", nvl(tour.getAttractions()));
+            meta.put("meals", nvl(tour.getMeals()));
+            meta.put("hotel", nvl(tour.getHotel()));
+            meta.put("pricings", dep.getPricings() != null ? dep.getPricings() : Collections.emptyList());
+            meta.put("transports", dep.getTransports() != null ? dep.getTransports() : Collections.emptyList());
+
+            List<Float> embedding = vectorService.createEmbedding(content);
+            if (embedding.isEmpty()) return 0;
+
+            vectorService.upsertVector(VectorDocumentDTO.builder()
+                    .id(docId)
+                    .content(content)
+                    .type("TOUR_DEPARTURE_FULL")
+                    .entityId(dep.getDepartureID())
+                    .embedding(embedding)
+                    .metadata(gson.toJson(meta))
+                    .build());
+            return 1;
+        } catch (Exception e) {
+            log.error("Error syncing full departure {}: {}", dep.getDepartureID(), e.getMessage());
+            return 0;
+        }
+    }
+
+    private String buildAmenityContent(TourSyncDTO tour) {
+        return new StringBuilder()
+                .append("Thông tin tiện ích tour ").append(nvl(tour.getTourName()))
+                .append(" (").append(nvl(tour.getTourCode())).append(")")
+                .append(" | Thời gian: ").append(nvl(tour.getDuration()))
+                .append(" | Khởi hành: ").append(nvl(tour.getStartLocationName()))
+                .append(" | Điểm đến: ").append(nvl(tour.getEndLocationName()))
+                .append(" | Điểm tham quan: ").append(nvl(tour.getAttractions()))
+                .append(" | Ẩm thực/bữa ăn: ").append(nvl(tour.getMeals()))
+                .append(" | Khách sạn/lưu trú: ").append(nvl(tour.getHotel()))
+                .append(" | Phương tiện: ").append(nvl(tour.getTransportation()))
+                .toString();
+    }
+
+    private String buildItineraryContent(TourSyncDTO tour, TourSyncDTO.ItineraryDaySyncDTO day) {
+        return new StringBuilder()
+                .append("Lịch trình tour ").append(nvl(tour.getTourName()))
+                .append(" (").append(nvl(tour.getTourCode())).append(")")
+                .append(" | Ngày ").append(day.getDayNumber() != null ? day.getDayNumber() : "")
+                .append(": ").append(nvl(day.getTitle()))
+                .append(" | Bữa ăn: ").append(nvl(day.getMeals()))
+                .append(" | Chi tiết: ").append(stripHtml(day.getDetails()))
+                .toString();
+    }
+
+    private String buildStartLocationContent(TourSyncDTO tour) {
+        return new StringBuilder()
+                .append("Tour khởi hành từ ").append(nvl(tour.getStartLocationName()))
+                .append(": ").append(nvl(tour.getTourName()))
+                .append(" (").append(nvl(tour.getTourCode())).append(")")
+                .append(" | Điểm đến: ").append(nvl(tour.getEndLocationName()))
+                .append(" | Thời gian: ").append(nvl(tour.getDuration()))
+                .append(" | Ngày khởi hành: ").append(String.join(", ", buildDepartureDates(tour)))
+                .append(" | Giá từ: ").append(formatPrice(findMinPrice(tour)))
+                .append(" | Ẩm thực: ").append(nvl(tour.getMeals()))
+                .append(" | Khách sạn: ").append(nvl(tour.getHotel()))
+                .toString();
+    }
+
+    private String buildDepartureFullContent(TourSyncDTO tour, TourSyncDTO.DepartureSyncDTO dep) {
+        return new StringBuilder()
+                .append(buildDepartureContent(tour, dep))
+                .append(" | Thông tin đầy đủ")
+                .append(" | Giá theo hành khách: ").append(formatPricingList(dep.getPricings()))
+                .append(" | Vận chuyển: ").append(formatTransportList(dep.getTransports()))
+                .append(" | Ẩm thực: ").append(nvl(tour.getMeals()))
+                .append(" | Khách sạn: ").append(nvl(tour.getHotel()))
+                .append(" | Điểm tham quan: ").append(nvl(tour.getAttractions()))
+                .toString();
+    }
 
     private int syncLocation(LocationSyncDTO loc) {
         try {
@@ -484,6 +673,87 @@ public class VectorSyncService {
     // ─────────────────────────────────────────────
     // UTILS
     // ─────────────────────────────────────────────
+
+    private Map<String, Object> baseTourMeta(TourSyncDTO tour) {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("tourId", tour.getTourID());
+        meta.put("tourCode", nvl(tour.getTourCode()));
+        meta.put("tourName", nvl(tour.getTourName()));
+        meta.put("imageUrl", nvl(tour.getImageUrl()));
+        meta.put("duration", nvl(tour.getDuration()));
+        meta.put("startLocationName", nvl(tour.getStartLocationName()));
+        meta.put("startLocationID", tour.getStartLocationID());
+        meta.put("endLocationName", nvl(tour.getEndLocationName()));
+        meta.put("endLocationID", tour.getEndLocationID());
+        return meta;
+    }
+
+    private double findMinPrice(TourSyncDTO tour) {
+        if (tour.getDepartures() == null) return 0.0;
+        return tour.getDepartures().stream()
+                .filter(d -> d.getAdultSalePrice() != null)
+                .mapToDouble(TourSyncDTO.DepartureSyncDTO::getAdultSalePrice)
+                .min()
+                .orElse(0.0);
+    }
+
+    private List<String> buildDepartureDates(TourSyncDTO tour) {
+        if (tour.getDepartures() == null) return Collections.emptyList();
+        List<String> dates = new ArrayList<>();
+        for (TourSyncDTO.DepartureSyncDTO dep : tour.getDepartures()) {
+            if (hasText(dep.getDepartureDate())) dates.add(dep.getDepartureDate());
+        }
+        return dates;
+    }
+
+    private List<String> buildStartAliases(String startLocationName) {
+        List<String> aliases = new ArrayList<>();
+        if (hasText(startLocationName)) {
+            aliases.add(startLocationName);
+            String normalized = startLocationName.toLowerCase(Locale.ROOT);
+            if (normalized.contains("hồ chí minh") || normalized.contains("ho chi minh")) {
+                aliases.add("HCM");
+                aliases.add("Sài Gòn");
+                aliases.add("Sai Gon");
+                aliases.add("TP Hồ Chí Minh");
+            }
+        }
+        return aliases;
+    }
+
+    private String formatPricingList(List<TourSyncDTO.PricingSyncDTO> pricings) {
+        if (pricings == null || pricings.isEmpty()) return "";
+        List<String> lines = new ArrayList<>();
+        for (TourSyncDTO.PricingSyncDTO pricing : pricings) {
+            lines.add(nvl(pricing.getPassengerType())
+                    + " " + nvl(pricing.getAgeDescription())
+                    + ": " + formatPrice(pricing.getSalePrice()));
+        }
+        return String.join("; ", lines);
+    }
+
+    private String formatTransportList(List<TourSyncDTO.TransportSyncDTO> transports) {
+        if (transports == null || transports.isEmpty()) return "";
+        List<String> lines = new ArrayList<>();
+        for (TourSyncDTO.TransportSyncDTO transport : transports) {
+            lines.add(nvl(transport.getTransportType())
+                    + " " + nvl(transport.getVehicleType())
+                    + " " + nvl(transport.getVehicleName())
+                    + " " + nvl(transport.getStartPoint())
+                    + " -> " + nvl(transport.getEndPoint())
+                    + " " + nvl(transport.getDepartTime())
+                    + " - " + nvl(transport.getArrivalTime()));
+        }
+        return String.join("; ", lines);
+    }
+
+    private String stripHtml(String html) {
+        if (html == null) return "";
+        return html.replace("&nbsp;", " ")
+                .replaceAll("(?is)<[^>]+>", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
 
     private String nvl(String s) {
         return s != null ? s : "";
