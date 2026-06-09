@@ -125,6 +125,126 @@ class TourFactAnswerServiceTest {
     }
 
     @Test
+    void genericDishQuestion_returnsTourSuggestions() {
+        VectorDocumentDTO doc = doc("TOUR_AMENITY", meta(
+                "tourId", 10,
+                "tourCode", "HCM-FOOD-3N2D",
+                "tourName", "TP. Ho Chi Minh - Mien Tay Am Thuc 3N2D",
+                "duration", "3 Ngay 2 Dem",
+                "meals", "Lau ca bop, trai cay mien vuon",
+                "hotel", "Khach san 3 sao",
+                "attractions", "Cho noi Cai Rang",
+                "minPrice", 3200000.0
+        ));
+        when(vectorService.searchSimilar(anyString(), anyInt())).thenReturn(List.of(doc));
+
+        ChatMessageResponse response = service.tryAnswer("co lau ca bop khong", "s1", idle());
+
+        assertThat(response).isNotNull();
+        assertThat(response.getMessageType()).isEqualTo("TOUR_SUGGESTIONS");
+        assertThat(response.getReply()).contains("Lau ca bop");
+    }
+
+    @Test
+    void genericDishQuestionWithTypo_usesFuzzyMatch() {
+        VectorDocumentDTO doc = doc("TOUR_AMENITY", meta(
+                "tourId", 10,
+                "tourCode", "HCM-FOOD-3N2D",
+                "tourName", "TP. Ho Chi Minh - Mien Tay Am Thuc 3N2D",
+                "duration", "3 Ngay 2 Dem",
+                "meals", "Lau ca bop, trai cay mien vuon",
+                "hotel", "Khach san 3 sao",
+                "attractions", "Cho noi Cai Rang",
+                "minPrice", 3200000.0
+        ));
+        when(vectorService.searchSimilar(anyString(), anyInt())).thenReturn(List.of(doc));
+
+        ChatMessageResponse response = service.tryAnswer("co lau ca bot ko", "s1", idle());
+
+        assertThat(response).isNotNull();
+        assertThat(response.getReply()).contains("Lau ca bop");
+    }
+
+    @Test
+    void genericAttractionQuestion_returnsTourSuggestions() {
+        VectorDocumentDTO doc = doc("TOUR_AMENITY", meta(
+                "tourId", 4,
+                "tourCode", "HCM-PQ-5N4D",
+                "tourName", "TP. Ho Chi Minh - Phu Quoc 5N4D",
+                "duration", "5 Ngay 4 Dem",
+                "meals", "Buffet sang tai resort, hai san tuoi moi bua",
+                "hotel", "Resort bien",
+                "attractions", "Vinpearl Safari, Grand World, Bai Sao",
+                "minPrice", 8500000.0
+        ));
+        when(vectorService.searchSimilar(anyString(), anyInt())).thenReturn(List.of(doc));
+
+        ChatMessageResponse response = service.tryAnswer("co Vinpearl Safari khong", "s1", idle());
+
+        assertThat(response).isNotNull();
+        assertThat(response.getMessageType()).isEqualTo("TOUR_SUGGESTIONS");
+        assertThat(response.getReply()).contains("Vinpearl Safari");
+    }
+
+    @Test
+    void genericAttractionWithPlaceQuestion_returnsMatchingTour() {
+        VectorDocumentDTO doc = doc("TOUR_AMENITY", meta(
+                "tourId", 4,
+                "tourCode", "HCM-PQ-5N4D",
+                "tourName", "TP. Ho Chi Minh - Phu Quoc 5N4D",
+                "duration", "5 Ngay 4 Dem",
+                "meals", "Buffet sang tai resort, hai san tuoi moi bua",
+                "hotel", "Resort bien",
+                "attractions", "Vinpearl Safari, Grand World, Bai Sao",
+                "minPrice", 8500000.0
+        ));
+        when(vectorService.searchSimilar(anyString(), anyInt())).thenReturn(List.of(doc));
+
+        ChatMessageResponse response = service.tryAnswer("Grand World Phu Quoc co tour nao", "s1", idle());
+
+        assertThat(response).isNotNull();
+        assertThat(response.getTourSuggestions()).hasSize(1);
+        assertThat(response.getTourSuggestions().get(0).getTourCode()).isEqualTo("HCM-PQ-5N4D");
+    }
+
+    @Test
+    void genericFactResult_remembersBookableDepartureContext() {
+        VectorDocumentDTO amenity = doc("TOUR_AMENITY", meta(
+                "tourId", 4,
+                "tourCode", "HCM-PQ-5N4D",
+                "tourName", "TP. Ho Chi Minh - Phu Quoc 5N4D",
+                "duration", "5 Ngay 4 Dem",
+                "meals", "Buffet sang tai resort, hai san tuoi moi bua",
+                "hotel", "Resort bien",
+                "attractions", "Vinpearl Safari, Grand World, Bai Sao",
+                "minPrice", 8500000.0
+        ));
+        VectorDocumentDTO departure = doc("TOUR_DEPARTURE", meta(
+                "tourId", 4,
+                "tourCode", "HCM-PQ-5N4D",
+                "tourName", "TP. Ho Chi Minh - Phu Quoc 5N4D",
+                "duration", "5 Ngay 4 Dem",
+                "startLocationName", "TP. Ho Chi Minh",
+                "departureID", 88,
+                "departureDate", "2027-04-20",
+                "availableSlots", 10,
+                "salePrice", 8500000.0
+        ));
+        when(vectorService.searchSimilar(anyString(), anyInt()))
+                .thenReturn(List.of(amenity), List.of(departure));
+
+        ConversationState state = idle();
+        ChatMessageResponse response = service.tryAnswer("co Vinpearl Safari khong", "s1", state);
+
+        assertThat(response).isNotNull();
+        assertThat(state.getStage()).isEqualTo(ConversationState.Stage.SHOWING_SEARCH_RESULTS);
+        assertThat(state.getLastSearchResults()).hasSize(1);
+        assertThat(state.getLastSearchResults().get(0).getTourCode()).isEqualTo("HCM-PQ-5N4D");
+        assertThat(state.getLastSearchResults().get(0).getDepartures()).hasSize(1);
+        assertThat(state.getLastSearchResults().get(0).getDepartures().get(0).getDepartureId()).isEqualTo(88);
+    }
+
+    @Test
     void semanticSeafoodQuestion_remembersBookableDepartureContext() {
         VectorDocumentDTO amenity = doc("TOUR_AMENITY", meta(
                 "tourId", 4,

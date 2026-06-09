@@ -47,8 +47,9 @@ public class TourFactAnswerService {
         boolean itinerarySignal = hasItinerarySignal(normalized);
         boolean foodHotelSignal = hasFoodHotelSignal(normalized);
         boolean startSignal = hasStartLocationSignal(normalized);
+        boolean genericFactSignal = hasGenericFactSignal(normalized);
 
-        if (!itinerarySignal && !foodHotelSignal && !startSignal && exactTourCode == null) {
+        if (!itinerarySignal && !foodHotelSignal && !startSignal && !genericFactSignal && exactTourCode == null) {
             return null;
         }
 
@@ -65,7 +66,7 @@ public class TourFactAnswerService {
             if (startAnswer != null) return startAnswer;
         }
 
-        if (foodHotelSignal || exactTourCode != null) {
+        if (foodHotelSignal || genericFactSignal || exactTourCode != null) {
             return answerAmenity(docs, exactTourCode, normalized, sessionId, state);
         }
 
@@ -239,6 +240,10 @@ public class TourFactAnswerService {
                 + asString(meta.get("attractions")) + " "
                 + (doc.getContent() != null ? doc.getContent() : "")));
         String mealText = normalizeSemanticAliases(normalize(asString(meta.get("meals"))));
+        String factText = normalizeSemanticAliases(normalize(asString(meta.get("meals")) + " "
+                + asString(meta.get("hotel")) + " "
+                + asString(meta.get("attractions")) + " "
+                + (doc.getContent() != null ? doc.getContent() : "")));
         if (containsAny(normalized, "buffet") && !containsAny(haystack, "buffet")) return false;
         boolean asksPho = hasFoodToken(normalized, "pho");
         boolean asksBun = hasFoodToken(normalized, "bun");
@@ -256,10 +261,89 @@ public class TourFactAnswerService {
         }
         List<String> contentWords = amenityContentWords(normalized);
         if (!contentWords.isEmpty()) {
-            long hits = contentWords.stream().filter(haystack::contains).count();
-            return hits > 0;
+            int directHits = 0;
+            int fuzzyHits = 0;
+            for (String word : contentWords) {
+                if (hasDirectToken(factText, word) || hasDirectToken(haystack, word)) {
+                    directHits++;
+                } else if (hasFuzzyToken(factText, word) || hasFuzzyToken(haystack, word)) {
+                    fuzzyHits++;
+                }
+            }
+            int hits = directHits + (directHits > 0 ? fuzzyHits : 0);
+            int requiredHits = contentWords.size() >= 2 && !normalized.contains(" hay ") ? 2 : 1;
+            return hits >= requiredHits;
         }
         return true;
+    }
+
+    private boolean hasGenericFactSignal(String text) {
+        if (text == null || text.isBlank()) return false;
+        if (isPlainTourSearch(text)) return false;
+        if (amenityContentWords(text).isEmpty()) return false;
+
+        return text.matches(".*\\btour\\s+nao\\s+co\\b.+")
+                || text.matches(".+\\bco\\s+tour\\s+nao\\b.*")
+                || text.matches(".+\\bo\\s+tour\\s+nao\\b.*")
+                || text.matches(".*\\bco\\b.+\\b(khong|ko|k)\\b.*");
+    }
+
+    private boolean isPlainTourSearch(String text) {
+        if (text == null) return false;
+        if (text.matches(".*\\btour\\s+nao\\s+co\\b.*")) return false;
+        return text.matches(".*\\bco\\s+tour\\s+(di|den)\\b.*")
+                || text.matches(".*\\btour\\s+(di|den)\\b.*")
+                || text.matches(".*\\btoi\\s+muon\\s+di\\b.*");
+    }
+
+    private boolean hasDirectToken(String haystack, String word) {
+        if (haystack == null || haystack.isBlank() || word == null || word.isBlank()) return false;
+        return haystack.contains(word);
+    }
+
+    private boolean hasFuzzyToken(String haystack, String word) {
+        if (haystack == null || haystack.isBlank() || word == null || word.isBlank()) return false;
+        for (String raw : haystack.split("\\s+")) {
+            String token = raw.replaceAll("[^a-z0-9]", "");
+            if (isFuzzyTokenMatch(word, token)) return true;
+        }
+        return false;
+    }
+
+    private boolean isFuzzyTokenMatch(String query, String candidate) {
+        if (query == null || candidate == null) return false;
+        if (query.length() < 3 || candidate.length() < 3) return false;
+        int lengthGap = Math.abs(query.length() - candidate.length());
+        int maxAllowed = Math.max(query.length(), candidate.length()) <= 5 ? 1 : 2;
+        if (lengthGap > maxAllowed) return false;
+        return editDistanceAtMost(query, candidate, maxAllowed);
+    }
+
+    private boolean editDistanceAtMost(String left, String right, int limit) {
+        if (left.equals(right)) return true;
+        if (Math.abs(left.length() - right.length()) > limit) return false;
+
+        int[] previous = new int[right.length() + 1];
+        int[] current = new int[right.length() + 1];
+        for (int j = 0; j <= right.length(); j++) previous[j] = j;
+
+        for (int i = 1; i <= left.length(); i++) {
+            current[0] = i;
+            int rowMin = current[0];
+            for (int j = 1; j <= right.length(); j++) {
+                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
+                current[j] = Math.min(
+                        Math.min(current[j - 1] + 1, previous[j] + 1),
+                        previous[j - 1] + cost
+                );
+                rowMin = Math.min(rowMin, current[j]);
+            }
+            if (rowMin > limit) return false;
+            int[] tmp = previous;
+            previous = current;
+            current = tmp;
+        }
+        return previous[right.length()] <= limit;
     }
 
     private boolean hasFoodToken(String text, String token) {
@@ -432,7 +516,8 @@ public class TourFactAnswerService {
         Set<String> stopWords = Set.of(
                 "toi", "minh", "muon", "thich", "co", "khong", "ko", "k", "tour", "nao", "ma",
                 "an", "uong", "mon", "bua", "thuc", "don", "am", "khach", "san",
-                "gi", "hay", "voi", "di", "du", "lich", "cho", "hoi", "xem"
+                "gi", "hay", "voi", "di", "du", "lich", "cho", "hoi", "xem", "tren", "duoi",
+                "nay", "kia", "do", "nhe", "nha", "duoc"
         );
         List<String> words = new ArrayList<>();
         for (String raw : normalized.split("\\s+")) {
