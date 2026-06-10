@@ -6,13 +6,16 @@ import com.tourism.analytics.dto.feign.CouponSyncDTO;
 import com.tourism.analytics.dto.feign.LocationSyncDTO;
 import com.tourism.analytics.dto.feign.ReviewSyncDTO;
 import com.tourism.analytics.dto.feign.TourSyncDTO;
+import com.tourism.analytics.entity.ChatbotVectorSyncRun;
 import com.tourism.analytics.feign.BookingFeignClient;
 import com.tourism.analytics.feign.TourCatalogFeignClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.*;
 
 /**
@@ -36,7 +39,11 @@ public class VectorSyncService {
     private final TourCatalogFeignClient tourCatalogFeignClient;
     private final BookingFeignClient     bookingFeignClient;
     private final VectorService          vectorService;
+    private final ChatbotVectorSyncRunService syncRunService;
+    private final StringRedisTemplate redisTemplate;
     private final Gson                   gson = new Gson();
+
+    private static final String SYNC_LOCK_KEY = "chatbot-sync:lock";
 
     // ─────────────────────────────────────────────
     // PUBLIC API
@@ -47,6 +54,10 @@ public class VectorSyncService {
      * Được gọi từ admin endpoint hoặc scheduled job.
      */
     public void syncAll() {
+        if (syncRunService != null) {
+            syncAllDetailed("MANUAL");
+            return;
+        }
         log.info("🔄 Starting full sync to Pinecone...");
         int tourDocs   = syncAllTours();
         int locDocs    = syncAllLocations();
@@ -64,6 +75,71 @@ public class VectorSyncService {
      * Sync toàn bộ tour active + departures từ tour-catalog.
      * @return tổng số document đã upsert
      */
+    public SyncCounts syncAllDetailed(String triggerType) {
+        return runWithHistory(triggerType, 0, "ALL", this::syncAllWithoutHistory);
+    }
+
+    public SyncCounts runEventSync(int eventCount, String entityTypes, SyncWork work) {
+        return runWithHistory("EVENT_DEBOUNCED", eventCount, entityTypes, work);
+    }
+
+    public SyncCounts syncAllWithoutHistory() {
+        log.info("Starting full sync to Pinecone...");
+        int tourDocs   = syncAllTours();
+        int locDocs    = syncAllLocations();
+        int revDocs    = syncAllReviews();
+        int couponDocs = syncAllCoupons();
+        log.info("Sync completed: {} tour docs, {} location docs, {} review docs, {} coupon docs",
+                tourDocs, locDocs, revDocs, couponDocs);
+        return new SyncCounts(tourDocs, locDocs, revDocs, couponDocs);
+    }
+
+    private SyncCounts runWithHistory(String triggerType, int eventCount, String entityTypes, SyncWork work) {
+        boolean lockAcquired = acquireSyncLock();
+        if (!lockAcquired) {
+            log.warn("Chatbot vector sync skipped because another sync is running. triggerType={}", triggerType);
+            return SyncCounts.empty();
+        }
+
+        ChatbotVectorSyncRun run = syncRunService.start(triggerType, eventCount, entityTypes);
+        try {
+            SyncCounts counts = work.run();
+            syncRunService.markSuccess(run, counts);
+            return counts;
+        } catch (Exception e) {
+            syncRunService.markFailed(run, e);
+            throw e;
+        } finally {
+            releaseSyncLock();
+        }
+    }
+
+    public boolean isSyncRunning() {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.hasKey(SYNC_LOCK_KEY));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean acquireSyncLock() {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.opsForValue()
+                    .setIfAbsent(SYNC_LOCK_KEY, UUID.randomUUID().toString(), Duration.ofMinutes(20)));
+        } catch (Exception e) {
+            log.warn("Could not use Redis sync lock, continuing without lock: {}", e.getMessage());
+            return true;
+        }
+    }
+
+    private void releaseSyncLock() {
+        try {
+            redisTemplate.delete(SYNC_LOCK_KEY);
+        } catch (Exception e) {
+            log.warn("Could not release Redis sync lock: {}", e.getMessage());
+        }
+    }
+
     public int syncAllTours() {
         try {
             List<TourSyncDTO> tours = tourCatalogFeignClient.getAllToursForChatbotSync();
@@ -98,7 +174,7 @@ public class VectorSyncService {
             log.info("📦 Fetched {} locations for sync", locations.size());
             int count = 0;
             for (LocationSyncDTO loc : locations) {
-                count += syncLocation(loc);
+                count += syncLocationDocument(loc);
             }
             log.info("✅ Locations synced: {} documents", count);
             return count;
@@ -122,7 +198,7 @@ public class VectorSyncService {
             log.info("📦 Fetched {} reviews for sync", reviews.size());
             int count = 0;
             for (ReviewSyncDTO review : reviews) {
-                count += syncReview(review);
+                count += syncReviewDocument(review);
             }
             log.info("✅ Reviews synced: {} documents", count);
             return count;
@@ -142,12 +218,23 @@ public class VectorSyncService {
     @Scheduled(cron = "0 0 2 * * *")
     public void scheduledSync() {
         log.info("⏰ Scheduled sync triggered at 2:00 AM");
-        syncAll();
+        syncAllDetailed("SCHEDULED");
     }
 
     // ─────────────────────────────────────────────
     // INTERNAL — TOUR SUMMARY
     // ─────────────────────────────────────────────
+
+    public int syncTour(TourSyncDTO tour) {
+        if (tour == null) return 0;
+        int count = 0;
+        count += syncTourSummary(tour);
+        count += syncTourAmenities(tour);
+        count += syncTourItineraryDays(tour);
+        count += syncTourStartLocation(tour);
+        count += syncTourDepartures(tour);
+        return count;
+    }
 
     private int syncTourSummary(TourSyncDTO tour) {
         try {
@@ -502,7 +589,7 @@ public class VectorSyncService {
                 .toString();
     }
 
-    private int syncLocation(LocationSyncDTO loc) {
+    public int syncLocationDocument(LocationSyncDTO loc) {
         try {
             String content = buildLocationContent(loc);
             String docId   = "LOCATION_" + loc.getLocationID();
@@ -548,7 +635,7 @@ public class VectorSyncService {
     // INTERNAL — REVIEW
     // ─────────────────────────────────────────────
 
-    private int syncReview(ReviewSyncDTO review) {
+    public int syncReviewDocument(ReviewSyncDTO review) {
         try {
             if (!hasText(review.getComment())) return 0;
 
@@ -601,7 +688,7 @@ public class VectorSyncService {
             log.info("📦 Fetched {} coupons for sync", coupons.size());
             int count = 0;
             for (CouponSyncDTO coupon : coupons) {
-                count += syncCoupon(coupon);
+                count += syncCouponDocument(coupon);
             }
             log.info("✅ Coupons synced: {} documents", count);
             return count;
@@ -611,7 +698,7 @@ public class VectorSyncService {
         }
     }
 
-    private int syncCoupon(CouponSyncDTO coupon) {
+    public int syncCouponDocument(CouponSyncDTO coupon) {
         try {
             String content = buildCouponContent(coupon);
             String docId   = "COUPON_" + coupon.getCouponID();
@@ -766,5 +853,47 @@ public class VectorSyncService {
     private String formatPrice(Double price) {
         if (price == null) return "N/A";
         return String.format("%,.0f VNĐ", price);
+    }
+    @FunctionalInterface
+    public interface SyncWork {
+        SyncCounts run();
+    }
+
+    public static class SyncCounts {
+        private final int tourDocs;
+        private final int locationDocs;
+        private final int reviewDocs;
+        private final int couponDocs;
+
+        public SyncCounts(int tourDocs, int locationDocs, int reviewDocs, int couponDocs) {
+            this.tourDocs = tourDocs;
+            this.locationDocs = locationDocs;
+            this.reviewDocs = reviewDocs;
+            this.couponDocs = couponDocs;
+        }
+
+        public static SyncCounts empty() {
+            return new SyncCounts(0, 0, 0, 0);
+        }
+
+        public int getTourDocs() {
+            return tourDocs;
+        }
+
+        public int getLocationDocs() {
+            return locationDocs;
+        }
+
+        public int getReviewDocs() {
+            return reviewDocs;
+        }
+
+        public int getCouponDocs() {
+            return couponDocs;
+        }
+
+        public int getTotalDocs() {
+            return tourDocs + locationDocs + reviewDocs + couponDocs;
+        }
     }
 }

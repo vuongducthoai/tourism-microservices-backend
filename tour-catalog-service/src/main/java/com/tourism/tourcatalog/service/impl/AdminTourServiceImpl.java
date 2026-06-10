@@ -12,6 +12,7 @@ import com.tourism.tourcatalog.entity.*;
 import com.tourism.tourcatalog.repository.LocationRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
 import com.tourism.tourcatalog.service.AdminTourService;
+import com.tourism.tourcatalog.service.ChatbotSyncEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -35,6 +36,7 @@ public class AdminTourServiceImpl implements AdminTourService {
     private final TourRepository tourRepository;
     private final LocationRepository locationRepository;
     private final Cloudinary cloudinary;
+    private final ChatbotSyncEventPublisher chatbotSyncEventPublisher;
 
     // ─── List / Search ──────────────────────────────────────────────────────────
 
@@ -103,6 +105,7 @@ public class AdminTourServiceImpl implements AdminTourService {
         }
 
         Tour saved = tourRepository.save(tour);
+        chatbotSyncEventPublisher.publish("tour", saved.getTourID(), saved.getTourID(), "CREATE");
         return toDetailResponse(saved);
     }
 
@@ -114,6 +117,7 @@ public class AdminTourServiceImpl implements AdminTourService {
         Tour tour = findTourById(tourId);
         applyGeneralInfo(tour, request);
         Tour saved = tourRepository.save(tour);
+        chatbotSyncEventPublisher.publish("tour", saved.getTourID(), saved.getTourID(), "UPDATE");
         return toDetailResponse(saved);
     }
 
@@ -140,6 +144,7 @@ public class AdminTourServiceImpl implements AdminTourService {
             tour.getItineraryDays().add(day);
         }
         tourRepository.save(tour);
+        chatbotSyncEventPublisher.publish("itinerary", tour.getTourID(), tour.getTourID(), "UPDATE");
     }
 
     // ─── Upload Image ────────────────────────────────────────────────────────────
@@ -162,6 +167,7 @@ public class AdminTourServiceImpl implements AdminTourService {
         if (tour.getImages() == null) tour.setImages(new ArrayList<>());
         tour.getImages().add(image);
         tourRepository.save(tour);
+        chatbotSyncEventPublisher.publish("tour", tour.getTourID(), tour.getTourID(), "UPDATE");
 
         return AdminImageResponse.builder()
                 .imageUrl(url)
@@ -191,6 +197,7 @@ public class AdminTourServiceImpl implements AdminTourService {
         if (tour.getMediaList() == null) tour.setMediaList(new ArrayList<>());
         tour.getMediaList().add(media);
         tourRepository.save(tour);
+        chatbotSyncEventPublisher.publish("tour", tour.getTourID(), tour.getTourID(), "UPDATE");
 
         return AdminMediaResponse.builder()
                 .mediaUrl(url)
@@ -205,6 +212,7 @@ public class AdminTourServiceImpl implements AdminTourService {
         Tour tour = findTourById(tourId);
         tour.setIsDeleted(true);
         tourRepository.save(tour);
+        chatbotSyncEventPublisher.publish("tour", tour.getTourID(), tour.getTourID(), "DELETE");
     }
 
     // ─── Utilities ───────────────────────────────────────────────────────────────

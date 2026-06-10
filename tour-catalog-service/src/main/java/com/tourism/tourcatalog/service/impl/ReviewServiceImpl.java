@@ -14,6 +14,7 @@ import com.tourism.tourcatalog.feign.dto.BookingBriefResponse;
 import com.tourism.tourcatalog.feign.dto.UserBriefResponse;
 import com.tourism.tourcatalog.repository.ReviewRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
+import com.tourism.tourcatalog.service.ChatbotSyncEventPublisher;
 import com.tourism.tourcatalog.service.FileStorageService;
 import com.tourism.tourcatalog.service.ReviewService;
 import com.tourism.tourcatalog.service.ReviewSummaryService;
@@ -44,6 +45,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final BookingFeignClient bookingClient;
     private final IamFeignClient     iamClient;
     private final ReviewSummaryService reviewSummaryService;
+    private final ChatbotSyncEventPublisher chatbotSyncEventPublisher;
 
     // ── Submit review ─────────────────────────────────────────────────────────
 
@@ -113,6 +115,10 @@ public class ReviewServiceImpl implements ReviewService {
 
         // 8. Persist review (cascades to image_reviews)
         Review saved = reviewRepository.save(review);
+        if (saved.getTour() != null) {
+            chatbotSyncEventPublisher.publish("review", saved.getReviewID(), saved.getTour().getTourID(), "CREATE");
+            chatbotSyncEventPublisher.publish("tour", saved.getTour().getTourID(), saved.getTour().getTourID(), "UPDATE");
+        }
 
         // 8b. Đánh dấu AI summary stale — fire-and-forget, không block flow
         if (saved.getTour() != null) {

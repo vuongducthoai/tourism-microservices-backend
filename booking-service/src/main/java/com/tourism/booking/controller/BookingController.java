@@ -60,6 +60,29 @@ public class BookingController {
         return ResponseEntity.ok(result);
     }
 
+    @Operation(summary = "[Internal] Chatbot sync coupon by id", description = "Endpoint noi bo cho incremental sync")
+    @GetMapping("/coupons/chatbot-sync/{couponId}")
+    public ResponseEntity<CouponChatbotSyncResponse> getCouponForChatbotSync(@PathVariable Integer couponId) {
+        return couponRepository.findActiveCoupons(LocalDateTime.now())
+                .stream()
+                .filter(c -> couponId.equals(c.getCouponID()))
+                .map(c -> CouponChatbotSyncResponse.builder()
+                        .couponID(c.getCouponID())
+                        .couponCode(c.getCouponCode())
+                        .description(c.getDescription())
+                        .discountAmount(c.getDiscountAmount())
+                        .startDate(c.getStartDate() != null ? c.getStartDate().toString() : null)
+                        .endDate(c.getEndDate() != null ? c.getEndDate().toString() : null)
+                        .usageLimit(c.getUsageLimit())
+                        .usageCount(c.getUsageCount())
+                        .couponType(c.getCouponType() != null ? c.getCouponType().name() : "GLOBAL")
+                        .departureId(c.getDepartureId())
+                        .build())
+                .findFirst()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @Operation(summary = "Lấy thông tin trang đặt tour", description = "Trả về giá, coupon, chuyến bay — dùng để hiển thị form đặt tour")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Thành công"),

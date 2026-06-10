@@ -43,6 +43,7 @@ public class VectorService {
 
     private final Gson gson = new Gson();
     private String pineconeUrl;
+    private volatile boolean searchTemporarilyUnavailable = false;
 
     // Pinecone Inference API — dùng để embed văn bản (thay Gemini)
     private static final String PINECONE_INFERENCE_URL = "https://api.pinecone.io/embed";
@@ -124,6 +125,7 @@ public class VectorService {
             metadataMap.put("entityId", String.valueOf(document.getEntityId()));
             metadataMap.put("content",  document.getContent());
             metadataMap.put("metadata", document.getMetadata());
+            flattenFilterMetadata(document.getMetadata(), metadataMap);
 
             Map<String, Object> vector = new HashMap<>();
             vector.put("id",       document.getId());
@@ -153,9 +155,11 @@ public class VectorService {
      * @return danh sách VectorDocumentDTO đã sắp xếp theo score giảm dần
      */
     public List<VectorDocumentDTO> searchSimilar(String queryText, int topK) {
+        searchTemporarilyUnavailable = false;
         try {
             List<Float> queryEmbedding = createEmbeddingForQuery(queryText);
             if (queryEmbedding.isEmpty()) {
+                searchTemporarilyUnavailable = true;
                 log.warn("⚠️ Empty embedding for query, returning empty results");
                 return new ArrayList<>();
             }
@@ -183,9 +187,18 @@ public class VectorService {
                         .collect(Collectors.toList());
             }
         } catch (Exception e) {
+            searchTemporarilyUnavailable = true;
             log.error("❌ Error searching vectors: {}", e.getMessage(), e);
         }
         return new ArrayList<>();
+    }
+
+    public boolean isSearchTemporarilyUnavailable() {
+        return searchTemporarilyUnavailable;
+    }
+
+    public void clearSearchTemporarilyUnavailable() {
+        searchTemporarilyUnavailable = false;
     }
 
     // ─────────────────────────────────────────────
@@ -215,6 +228,21 @@ public class VectorService {
             log.debug("🗑️ Deleted vectors {}:{}", type, entityId);
         } catch (Exception e) {
             log.error("❌ Error deleting vectors {}:{} — {}", type, entityId, e.getMessage());
+        }
+    }
+
+    public void deleteVectorsByFilter(Map<String, Object> filter) {
+        if (filter == null || filter.isEmpty()) return;
+        try {
+            HttpHeaders headers = buildPineconeHeaders();
+            Map<String, Object> body = Map.of("filter", filter, "deleteAll", false);
+
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, headers);
+            restTemplate.postForEntity(pineconeUrl + "/vectors/delete", req, String.class);
+
+            log.debug("Deleted vectors by filter: {}", filter);
+        } catch (Exception e) {
+            log.error("Error deleting vectors by filter {} - {}", filter, e.getMessage());
         }
     }
 
@@ -265,5 +293,32 @@ public class VectorService {
 
     private Integer parseIntSafe(String s) {
         try { return Integer.parseInt(s); } catch (Exception e) { return 0; }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void flattenFilterMetadata(String metadataJson, Map<String, Object> metadataMap) {
+        if (metadataJson == null || metadataJson.isBlank()) return;
+        try {
+            Map<String, Object> raw = gson.fromJson(metadataJson, Map.class);
+            if (raw == null) return;
+            copyIfScalar(raw, metadataMap, "tourId");
+            copyIfScalar(raw, metadataMap, "tourID");
+            copyIfScalar(raw, metadataMap, "tourCode");
+            copyIfScalar(raw, metadataMap, "departureID");
+            copyIfScalar(raw, metadataMap, "departureId");
+            copyIfScalar(raw, metadataMap, "reviewID");
+            copyIfScalar(raw, metadataMap, "couponID");
+            copyIfScalar(raw, metadataMap, "locationID");
+        } catch (Exception e) {
+            log.debug("Could not flatten vector metadata: {}", e.getMessage());
+        }
+    }
+
+    private void copyIfScalar(Map<String, Object> source, Map<String, Object> target, String key) {
+        Object value = source.get(key);
+        if (value == null || value instanceof Map<?, ?> || value instanceof Collection<?>) return;
+        if (value instanceof Number || value instanceof Boolean || value instanceof String) {
+            target.put(key, value);
+        }
     }
 }

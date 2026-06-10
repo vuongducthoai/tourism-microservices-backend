@@ -61,6 +61,12 @@ public class GatewayRoutesConfig {
                                 "RETAIN_UNIQUE"))
                         .uri("lb:ws://notification-service"))
 
+                // Analytics Service - Admin Dashboard rewrite
+                .route("analytics-service-admin-dashboard", r -> r
+                        .path("/api/admin/dashboard/**")
+                        .filters(f -> f.rewritePath("/api/admin/dashboard/(?<seg>.*)", "/api/dashboard/${seg}"))
+                        .uri("lb://analytics-service"))
+
                 // Analytics Service
                 .route("analytics-service", r -> r
                         .path("/api/dashboard/**", "/api/chatbot/**")

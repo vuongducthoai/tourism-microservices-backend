@@ -42,6 +42,7 @@ public class ChatbotService {
     private final BookingConversationService bookingService;
     private final IntentRouter               intentRouter;
     private final TourFactAnswerService      tourFactAnswerService;
+    private final TourRankingAnswerService   tourRankingAnswerService;
     private final Gson                       gson = new Gson();
 
     private static final String GEMINI_GENERATE_URL =
@@ -74,6 +75,7 @@ public class ChatbotService {
         String sessionId   = request.getSessionId() != null ? request.getSessionId() : UUID.randomUUID().toString();
         ChatMessageRequest finalRequest = ChatMessageRequest.builder()
                 .message(userMessage).sessionId(sessionId).userId(request.getUserId()).build();
+        vectorService.clearSearchTemporarilyUnavailable();
 
         // 1. Load session state from Redis
         ConversationState state = sessionService.getOrCreate(sessionId);
@@ -97,8 +99,16 @@ public class ChatbotService {
         }
         log.info("🎯 Intent: {} (source={}, confidence={})", intent.getIntent(), intent.getRawSource(), intent.getConfidence());
 
+        if (resp == null && shouldReportVectorSearchUnavailable(intent, userMessage, state)) {
+            resp = buildVectorSearchUnavailableResponse(sessionId, state);
+        }
+
         if (resp == null && isCommonPolicyQuestion(userMessage)) {
             resp = buildCommonPolicyAnswer(sessionId, state);
+        }
+
+        if (resp == null) {
+            resp = tourRankingAnswerService.tryAnswer(userMessage, sessionId, state);
         }
 
         if (isTourContextReference(userMessage) && !hasTourContext(state)
@@ -177,6 +187,24 @@ public class ChatbotService {
         return RagMode.GENERAL_POLICY;
     }
 
+    private boolean shouldReportVectorSearchUnavailable(IntentResult intent, String userMessage, ConversationState state) {
+        if (!vectorService.isSearchTemporarilyUnavailable()) return false;
+        if (state == null || state.getStage() != ConversationState.Stage.IDLE) return false;
+        if (intent != null && intent.getIntent() == IntentResult.Intent.TOUR_RETRIEVAL) return true;
+
+        String normalized = normalizeText(userMessage);
+        return normalized.matches(".*(tour|chuyen\\s*di|du\\s*lich|khoi\\s*hanh|xuat\\s*phat|di\\s+|den\\s+|an\\s+|am\\s*thuc).*");
+    }
+
+    private ChatMessageResponse buildVectorSearchUnavailableResponse(String sessionId, ConversationState state) {
+        return buildResponse(
+                "Hiện kết nối dữ liệu tìm kiếm tour đang chậm nên mình chưa tra cứu chính xác được. Bạn thử lại sau ít phút hoặc tìm theo điểm đến cụ thể giúp mình nhé.",
+                sessionId,
+                state,
+                new ArrayList<>()
+        );
+    }
+
     private List<VectorDocumentDTO> filterDocsForRagMode(List<VectorDocumentDTO> docs, RagMode mode) {
         if (docs == null) return new ArrayList<>();
         if (mode == RagMode.DISCOUNT || mode == RagMode.TOUR_SEARCH) {
@@ -224,6 +252,14 @@ public class ChatbotService {
         int topK = (isDiscountQuery || isCouponQuery || mode == RagMode.DISCOUNT) ? 50 : 10;
 
         List<VectorDocumentDTO> docs = filterDocsForRagMode(vectorService.searchSimilar(userMessage, topK), mode);
+        if (vectorService.isSearchTemporarilyUnavailable()) {
+            return buildResponse(
+                    "Hiện kết nối dữ liệu tìm kiếm tour đang chậm nên mình chưa tra cứu chính xác được. Bạn thử lại sau ít phút hoặc tìm theo điểm đến cụ thể giúp mình nhé.",
+                    sessionId,
+                    state,
+                    new ArrayList<>()
+            );
+        }
         log.debug("🔍 Retrieved {} documents from Pinecone (topK={})", docs.size(), topK);
 
         // Build context (with recentTurns if available)

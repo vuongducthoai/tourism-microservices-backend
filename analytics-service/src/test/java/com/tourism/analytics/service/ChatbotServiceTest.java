@@ -51,6 +51,9 @@ class ChatbotServiceTest {
     @Mock
     private TourFactAnswerService tourFactAnswerService;
 
+    @Mock
+    private TourRankingAnswerService tourRankingAnswerService;
+
     @InjectMocks
     private ChatbotService chatbotService;
 
@@ -74,6 +77,7 @@ class ChatbotServiceTest {
                         .build());
         lenient().when(bookingService.handle(any(ChatMessageRequest.class), any(ConversationState.class))).thenReturn(null);
         lenient().when(tourFactAnswerService.tryAnswer(anyString(), anyString(), any(ConversationState.class))).thenReturn(null);
+        lenient().when(tourRankingAnswerService.tryAnswer(anyString(), anyString(), any(ConversationState.class))).thenReturn(null);
     }
 
     // ─────────────────────────────────────────────

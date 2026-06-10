@@ -10,6 +10,7 @@ import com.tourism.booking.feign.TourCatalogFeignClient;
 import com.tourism.booking.feign.dto.DepartureInfoResponse;
 import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.service.AdminCouponService;
+import com.tourism.booking.service.ChatbotSyncEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +30,7 @@ public class AdminCouponServiceImpl implements AdminCouponService {
     private final CouponRepository couponRepository;
     private final TourCatalogFeignClient tourCatalogClient;
     private final NotificationFeignClient notificationClient;
+    private final ChatbotSyncEventPublisher chatbotSyncEventPublisher;
 
     @Override
     @Transactional
@@ -44,6 +46,7 @@ public class AdminCouponServiceImpl implements AdminCouponService {
         if (Boolean.TRUE.equals(request.getSendNotification())) {
             sendCouponCreatedNotification(saved, request);
         }
+        chatbotSyncEventPublisher.publish("coupon", saved.getCouponID(), "CREATE");
 
         return mapToResponse(saved);
     }
@@ -64,6 +67,7 @@ public class AdminCouponServiceImpl implements AdminCouponService {
         if (Boolean.TRUE.equals(request.getSendNotification())) {
             sendCouponUpdatedNotification(saved);
         }
+        chatbotSyncEventPublisher.publish("coupon", saved.getCouponID(), "UPDATE");
 
         return mapToResponse(saved);
     }
@@ -74,6 +78,7 @@ public class AdminCouponServiceImpl implements AdminCouponService {
         Coupon coupon = findActiveById(id);
         coupon.setIsDeleted(true);
         couponRepository.save(coupon);
+        chatbotSyncEventPublisher.publish("coupon", coupon.getCouponID(), "DELETE");
     }
 
     @Override

@@ -53,6 +53,16 @@ public class LocationController {
         return ResponseEntity.ok(locationService.getAllLocationsForChatbotSync());
     }
 
+    @Operation(summary = "[Internal] Chatbot sync location by id", description = "Endpoint ná»™i bá»™ cho incremental sync")
+    @GetMapping("/chatbot-sync/{locationId}")
+    public ResponseEntity<LocationChatbotSyncResponse> getChatbotSyncLocationById(@PathVariable Integer locationId) {
+        return locationService.getAllLocationsForChatbotSync().stream()
+                .filter(location -> locationId.equals(location.getLocationID()))
+                .findFirst()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @Operation(summary = "[Admin] Danh sách điểm quốc nội", description = "Lấy danh sách các địa điểm quốc nội — dùng cho admin departure management")
     @ApiResponse(responseCode = "200", description = "Danh sách địa điểm quốc nội")
     @GetMapping("/national")

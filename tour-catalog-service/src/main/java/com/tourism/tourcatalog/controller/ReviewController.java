@@ -90,5 +90,15 @@ public class ReviewController {
     public ResponseEntity<List<ReviewChatbotSyncResponse>> getChatbotSyncReviews() {
         return ResponseEntity.ok(reviewService.getAllVisibleReviewsForChatbot());
     }
+
+    @Operation(summary = "[Internal] Chatbot sync review by id", description = "Endpoint ná»™i bá»™ cho incremental sync")
+    @GetMapping("/chatbot-sync/{reviewId}")
+    public ResponseEntity<ReviewChatbotSyncResponse> getChatbotSyncReviewById(@PathVariable Integer reviewId) {
+        return reviewService.getAllVisibleReviewsForChatbot().stream()
+                .filter(review -> reviewId.equals(review.getReviewID()))
+                .findFirst()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
 }
 

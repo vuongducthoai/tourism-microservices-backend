@@ -3,11 +3,13 @@ package com.tourism.analytics.service;
 import com.tourism.analytics.dto.feign.LocationSyncDTO;
 import com.tourism.analytics.dto.feign.ReviewSyncDTO;
 import com.tourism.analytics.dto.feign.TourSyncDTO;
+import com.tourism.analytics.feign.BookingFeignClient;
 import com.tourism.analytics.feign.TourCatalogFeignClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.util.List;
 
@@ -33,7 +35,16 @@ class VectorSyncServiceTest {
     private TourCatalogFeignClient tourCatalogFeignClient;
 
     @Mock
+    private BookingFeignClient bookingFeignClient;
+
+    @Mock
     private VectorService vectorService;
+
+    @Mock
+    private ChatbotVectorSyncRunService syncRunService;
+
+    @Mock
+    private StringRedisTemplate redisTemplate;
 
     @InjectMocks
     private VectorSyncService vectorSyncService;
@@ -48,14 +59,16 @@ class VectorSyncServiceTest {
         when(tourCatalogFeignClient.getAllToursForChatbotSync()).thenReturn(List.of());
         when(tourCatalogFeignClient.getLocationsForChatbotSync()).thenReturn(List.of());
         when(tourCatalogFeignClient.getAllVisibleReviews()).thenReturn(List.of());
+        when(bookingFeignClient.getCouponsForChatbotSync()).thenReturn(List.of());
 
         // Act
-        assertThatNoException().isThrownBy(() -> vectorSyncService.syncAll());
+        assertThatNoException().isThrownBy(() -> vectorSyncService.syncAllWithoutHistory());
 
         // Assert: all three Feign methods called
         verify(tourCatalogFeignClient).getAllToursForChatbotSync();
         verify(tourCatalogFeignClient).getLocationsForChatbotSync();
         verify(tourCatalogFeignClient).getAllVisibleReviews();
+        verify(bookingFeignClient).getCouponsForChatbotSync();
     }
 
     // ─────────────────────────────────────────────
