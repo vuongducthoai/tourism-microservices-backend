@@ -176,6 +176,33 @@ public class TourServiceImpl implements TourService {
                         }
                     }
 
+                    List<TourChatbotSyncResponse.PricingSyncResponse> pricingDTOs = new ArrayList<>();
+                    if (dep.getPricings() != null) {
+                        for (DeparturePricing p : dep.getPricings()) {
+                            pricingDTOs.add(TourChatbotSyncResponse.PricingSyncResponse.builder()
+                                    .passengerType(p.getPassengerType())
+                                    .ageDescription(p.getAgeDescription())
+                                    .salePrice(p.getSalePrice() != null ? p.getSalePrice().doubleValue() : null)
+                                    .originalPrice(p.getOriginalPrice() != null ? p.getOriginalPrice().doubleValue() : null)
+                                    .build());
+                        }
+                    }
+
+                    List<TourChatbotSyncResponse.TransportSyncResponse> transportDTOs = new ArrayList<>();
+                    if (dep.getTransports() != null) {
+                        for (DepartureTransport t : dep.getTransports()) {
+                            transportDTOs.add(TourChatbotSyncResponse.TransportSyncResponse.builder()
+                                    .transportType(t.getTransportType() != null ? t.getTransportType().name() : null)
+                                    .vehicleType(t.getVehicleType() != null ? t.getVehicleType().name() : null)
+                                    .vehicleName(t.getVehicleName())
+                                    .startPoint(t.getStartPoint())
+                                    .endPoint(t.getEndPoint())
+                                    .departTime(t.getDepartTime() != null ? t.getDepartTime().toString() : null)
+                                    .arrivalTime(t.getArrivalTime() != null ? t.getArrivalTime().toString() : null)
+                                    .build());
+                        }
+                    }
+
                     departureDTOs.add(TourChatbotSyncResponse.DepartureSyncResponse.builder()
                             .departureID(dep.getDepartureID())
                             .departureDate(dep.getDepartureDate().toLocalDate().toString())
@@ -187,8 +214,23 @@ public class TourServiceImpl implements TourService {
                             .couponCode(null)
                             .couponStartDate(null)
                             .couponEndDate(null)
+                            .pricings(pricingDTOs)
+                            .transports(transportDTOs)
                             .build());
                 }
+            }
+
+            List<TourChatbotSyncResponse.ItineraryDaySyncResponse> itineraryDTOs = new ArrayList<>();
+            if (tour.getItineraryDays() != null) {
+                tour.getItineraryDays().stream()
+                        .sorted(Comparator.comparing(day -> day.getDayNumber() != null ? day.getDayNumber() : 0))
+                        .forEach(day -> itineraryDTOs.add(TourChatbotSyncResponse.ItineraryDaySyncResponse.builder()
+                                .itineraryDayID(day.getItineraryDayID())
+                                .dayNumber(day.getDayNumber())
+                                .title(day.getTitle())
+                                .details(day.getDetails())
+                                .meals(day.getMeals())
+                                .build()));
             }
 
             result.add(TourChatbotSyncResponse.builder()
@@ -208,6 +250,7 @@ public class TourServiceImpl implements TourService {
                     .avgRating(avgRating)
                     .reviewCount(reviewCount)
                     .departures(departureDTOs)
+                    .itineraryDays(itineraryDTOs)
                     .build());
         }
 

@@ -426,9 +426,12 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    dns_opt:
+      - timeout:2
+      - attempts:3
     environment:
       - TZ=Asia/Ho_Chi_Minh
-      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh
+      - JAVA_TOOL_OPTIONS=-Duser.timezone=Asia/Ho_Chi_Minh -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/analytics_db
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=postgres
@@ -437,6 +440,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PINECONE_ENV=${PINECONE_ENV}
+      - PINECONE_HOST=${PINECONE_HOST}
 
     depends_on:
       service-discovery:

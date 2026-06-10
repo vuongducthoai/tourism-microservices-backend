@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,8 @@ public class AdminUserStatsController {
         LocalDate today = LocalDate.now();
         LocalDate rangeEnd = (to != null) ? LocalDate.parse(to, DATE_FMT) : today;
         LocalDate rangeStart = (from != null) ? LocalDate.parse(from, DATE_FMT) : rangeEnd.minusDays(30);
-        LocalDate prevStart = rangeStart.minusDays(rangeEnd.toEpochDay() - rangeStart.toEpochDay());
+        long daysInRange = ChronoUnit.DAYS.between(rangeStart, rangeEnd.plusDays(1));
+        LocalDate prevStart = rangeStart.minusDays(daysInRange);
 
         LocalDateTime rangeStartDT = rangeStart.atStartOfDay();
         LocalDateTime rangeEndDT = rangeEnd.plusDays(1).atStartOfDay();

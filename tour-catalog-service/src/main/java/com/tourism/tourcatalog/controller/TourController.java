@@ -54,6 +54,16 @@ public class TourController {
         return ResponseEntity.ok(tourService.getAllToursForChatbotSync());
     }
 
+    @Operation(summary = "[Internal] Chatbot sync data by tour id", description = "Endpoint ná»™i bá»™ cho incremental sync")
+    @GetMapping("/chatbot-sync/{tourId}")
+    public ResponseEntity<TourChatbotSyncResponse> getChatbotSyncDataById(@PathVariable Integer tourId) {
+        return tourService.getAllToursForChatbotSync().stream()
+                .filter(tour -> tourId.equals(tour.getTourID()))
+                .findFirst()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @Operation(summary = "Lấy tour liên quan", description = "3 tour cùng điểm đến")
     @GetMapping("/related/{tourCode}")
     public ResponseEntity<List<RelatedTourResponse>> getRelatedTours(@PathVariable String tourCode) {

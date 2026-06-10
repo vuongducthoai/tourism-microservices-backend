@@ -4,6 +4,7 @@ import com.tourism.analytics.dto.dashboard.feign.BookingStatsResponse;
 import com.tourism.analytics.dto.feign.CouponSyncDTO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
@@ -18,6 +19,9 @@ public interface BookingFeignClient {
 
     @GetMapping("/api/bookings/coupons/chatbot-sync")
     List<CouponSyncDTO> getCouponsForChatbotSync();
+
+    @GetMapping("/api/bookings/coupons/chatbot-sync/{couponId}")
+    CouponSyncDTO getCouponForChatbotSync(@PathVariable("couponId") Integer couponId);
 
     @GetMapping("/api/admin/bookings/stats")
     BookingStatsResponse getBookingStats(

@@ -153,6 +153,12 @@ public class DashboardStatsDTO {
         private List<Insight> insights;
         private List<Prediction> predictions;
         private List<Recommendation> recommendations;
+        private String periodFrom;
+        private String periodTo;
+        private String mode;
+        private String generatedAt;
+        private String verificationSummary;
+        private AiEvidenceDashboard aiEvidenceDashboard;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
@@ -161,6 +167,9 @@ public class DashboardStatsDTO {
         private String description;
         private String type;     // POSITIVE | NEUTRAL | NEGATIVE
         private Integer priority; // 1-5
+        private List<String> usedMetricKeys;
+        private String verificationStatus; // VERIFIED | LIMITED | UNVERIFIED
+        private String confidenceReason;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
@@ -169,6 +178,9 @@ public class DashboardStatsDTO {
         private String prediction;
         private Integer confidence; // 0-100
         private String timeframe;
+        private List<String> usedMetricKeys;
+        private String verificationStatus; // VERIFIED | LIMITED | UNVERIFIED
+        private String confidenceReason;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor
@@ -177,6 +189,37 @@ public class DashboardStatsDTO {
         private String description;
         private String action;
         private Integer impact; // 1-5
+        private List<String> usedMetricKeys;
+        private String verificationStatus; // VERIFIED | LIMITED | UNVERIFIED
+        private String confidenceReason;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class AiEvidenceDashboard {
+        private List<AiEvidenceGroup> groups;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class AiEvidenceGroup {
+        private String groupKey;
+        private String groupLabel;
+        private List<AiEvidenceMetric> metrics;
+    }
+
+    @Data @Builder @NoArgsConstructor @AllArgsConstructor
+    public static class AiEvidenceMetric {
+        private String metricKey;
+        private String label;
+        private String currentValue;
+        private String previousValue;
+        private String changeValue;
+        private Double changePercent;
+        private String formula;
+        private String sourceService;
+        private String sourceEndpoint;
+        private List<String> usedByAiItems;
+        private String dataQuality; // VERIFIED | LIMITED | FALLBACK
+        private String note;
     }
 
     // ══════════════════════════════════════════════

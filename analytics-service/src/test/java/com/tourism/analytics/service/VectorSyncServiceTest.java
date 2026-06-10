@@ -3,11 +3,13 @@ package com.tourism.analytics.service;
 import com.tourism.analytics.dto.feign.LocationSyncDTO;
 import com.tourism.analytics.dto.feign.ReviewSyncDTO;
 import com.tourism.analytics.dto.feign.TourSyncDTO;
+import com.tourism.analytics.feign.BookingFeignClient;
 import com.tourism.analytics.feign.TourCatalogFeignClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.util.List;
 
@@ -33,7 +35,16 @@ class VectorSyncServiceTest {
     private TourCatalogFeignClient tourCatalogFeignClient;
 
     @Mock
+    private BookingFeignClient bookingFeignClient;
+
+    @Mock
     private VectorService vectorService;
+
+    @Mock
+    private ChatbotVectorSyncRunService syncRunService;
+
+    @Mock
+    private StringRedisTemplate redisTemplate;
 
     @InjectMocks
     private VectorSyncService vectorSyncService;
@@ -48,14 +59,16 @@ class VectorSyncServiceTest {
         when(tourCatalogFeignClient.getAllToursForChatbotSync()).thenReturn(List.of());
         when(tourCatalogFeignClient.getLocationsForChatbotSync()).thenReturn(List.of());
         when(tourCatalogFeignClient.getAllVisibleReviews()).thenReturn(List.of());
+        when(bookingFeignClient.getCouponsForChatbotSync()).thenReturn(List.of());
 
         // Act
-        assertThatNoException().isThrownBy(() -> vectorSyncService.syncAll());
+        assertThatNoException().isThrownBy(() -> vectorSyncService.syncAllWithoutHistory());
 
         // Assert: all three Feign methods called
         verify(tourCatalogFeignClient).getAllToursForChatbotSync();
         verify(tourCatalogFeignClient).getLocationsForChatbotSync();
         verify(tourCatalogFeignClient).getAllVisibleReviews();
+        verify(bookingFeignClient).getCouponsForChatbotSync();
     }
 
     // ─────────────────────────────────────────────
@@ -63,18 +76,19 @@ class VectorSyncServiceTest {
     // ─────────────────────────────────────────────
 
     @Test
-    void syncAllTours_tourWithOneFutureDeparture_upsertsTwo() {
+    void syncAllTours_tourWithOneFutureDeparture_upsertsFactDocsToo() {
         // Arrange: 1 tour + 1 future departure
         TourSyncDTO.DepartureSyncDTO dep = new TourSyncDTO.DepartureSyncDTO(
                 10, "2030-06-15", 5, 2500000.0, 3000000.0,
-                null, null, null, null);
+                null, null, null, null,
+                List.of(), List.of());
 
         TourSyncDTO tour = new TourSyncDTO(
                 1, "HN001", "Tour Hà Nội 3N2Đ", "3 ngày 2 đêm", "Máy bay",
                 "Hà Nội", 1, "Đà Nẵng", 2,
                 "Hoàn Kiếm, Hồ Tây", "Sáng + Tối", "4 sao",
                 "https://img.com/hn.jpg", 4.5, 10,
-                List.of(dep));
+                List.of(dep), List.of());
 
         when(tourCatalogFeignClient.getAllToursForChatbotSync()).thenReturn(List.of(tour));
         when(vectorService.createEmbedding(anyString())).thenReturn(List.of(0.1f, 0.2f));
@@ -82,9 +96,9 @@ class VectorSyncServiceTest {
         // Act
         int count = vectorSyncService.syncAllTours();
 
-        // Assert: 1 TOUR_SUMMARY + 1 TOUR_DEPARTURE = 2 upserts
-        assertThat(count).isEqualTo(2);
-        verify(vectorService, times(2)).upsertVector(any());
+        // Assert: old docs stay, additional fact docs are synced too
+        assertThat(count).isEqualTo(5);
+        verify(vectorService, times(5)).upsertVector(any());
     }
 
     @Test
@@ -95,7 +109,7 @@ class VectorSyncServiceTest {
                 "Hà Nội", 1, "Hạ Long", 3,
                 "Vịnh Hạ Long", null, null,
                 null, null, null,
-                List.of());
+                List.of(), List.of());
 
         when(tourCatalogFeignClient.getAllToursForChatbotSync()).thenReturn(List.of(tour));
         when(vectorService.createEmbedding(anyString())).thenReturn(List.of()); // empty!

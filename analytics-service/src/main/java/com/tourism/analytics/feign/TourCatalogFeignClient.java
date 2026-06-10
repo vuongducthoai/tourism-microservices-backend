@@ -7,6 +7,7 @@ import com.tourism.analytics.dto.feign.ReviewSyncDTO;
 import com.tourism.analytics.dto.feign.TourSyncDTO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
@@ -23,11 +24,20 @@ public interface TourCatalogFeignClient {
     @GetMapping("/api/tours/chatbot-sync")
     List<TourSyncDTO> getAllToursForChatbotSync();
 
+    @GetMapping("/api/tours/chatbot-sync/{tourId}")
+    TourSyncDTO getTourForChatbotSync(@PathVariable("tourId") Integer tourId);
+
     @GetMapping("/api/locations/chatbot-sync")
     List<LocationSyncDTO> getLocationsForChatbotSync();
 
+    @GetMapping("/api/locations/chatbot-sync/{locationId}")
+    LocationSyncDTO getLocationForChatbotSync(@PathVariable("locationId") Integer locationId);
+
     @GetMapping("/api/reviews/chatbot-sync")
     List<ReviewSyncDTO> getAllVisibleReviews();
+
+    @GetMapping("/api/reviews/chatbot-sync/{reviewId}")
+    ReviewSyncDTO getReviewForChatbotSync(@PathVariable("reviewId") Integer reviewId);
 
     @GetMapping("/api/admin/tours/stats")
     TourStatsResponse getTourStats(

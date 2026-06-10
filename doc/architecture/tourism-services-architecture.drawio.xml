@@ -1,0 +1,135 @@
+<mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <mxCell id="user" value="User" style="shape=mxgraph.office.users.user;html=1;fillColor=#2072B8;strokeColor=none;fontSize=14;fontStyle=1;verticalLabelPosition=bottom;verticalAlign=top;" vertex="1" parent="1">
+      <mxGeometry x="50" y="380" width="46" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="frontend" value="&lt;b&gt;Future Travel FE&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF5FF;strokeColor=#2072B8;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="140" y="360" width="130" height="80" as="geometry" />
+    </mxCell>
+    <mxCell id="gateway" value="&lt;b&gt;api-gateway&lt;/b&gt;&lt;br&gt;Spring Cloud Gateway" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="330" y="360" width="150" height="80" as="geometry" />
+    </mxCell>
+
+    <mxCell id="module" value="Tourism Microservices Backend" style="swimlane;html=1;whiteSpace=wrap;strokeColor=#FFB570;fillColor=none;strokeWidth=2;fontSize=18;fontStyle=1;startSize=28;align=center;" vertex="1" parent="1">
+      <mxGeometry x="540" y="80" width="1080" height="760" as="geometry" />
+    </mxCell>
+
+    <mxCell id="service-discovery" value="&lt;b&gt;service-discovery&lt;/b&gt;&lt;br&gt;Eureka" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;fontSize=14;fontStyle=1;" vertex="1" parent="module">
+      <mxGeometry x="40" y="50" width="170" height="80" as="geometry" />
+    </mxCell>
+    <mxCell id="config-server" value="&lt;b&gt;config-server&lt;/b&gt;&lt;br&gt;Central config" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;fontSize=14;fontStyle=1;" vertex="1" parent="module">
+      <mxGeometry x="260" y="50" width="170" height="80" as="geometry" />
+    </mxCell>
+
+    <mxCell id="iam" value="&lt;b&gt;iam-service&lt;/b&gt;&lt;br&gt;Auth, User, Coin&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="40" y="180" width="170" height="150" as="geometry" />
+    </mxCell>
+    <mxCell id="tour" value="&lt;b&gt;tour-catalog-service&lt;/b&gt;&lt;br&gt;Tours, Reviews, Locations&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="260" y="180" width="180" height="150" as="geometry" />
+    </mxCell>
+    <mxCell id="booking" value="&lt;b&gt;booking-service&lt;/b&gt;&lt;br&gt;Bookings, Coupons, Sepay withdrawals&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="500" y="180" width="190" height="150" as="geometry" />
+    </mxCell>
+    <mxCell id="payment" value="&lt;b&gt;payment-service&lt;/b&gt;&lt;br&gt;VNPay, PayOS gateway&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="760" y="180" width="180" height="150" as="geometry" />
+    </mxCell>
+
+    <mxCell id="forum" value="&lt;b&gt;forum-service&lt;/b&gt;&lt;br&gt;Posts, Comments, Moderation&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="40" y="420" width="170" height="150" as="geometry" />
+    </mxCell>
+    <mxCell id="notification" value="&lt;b&gt;notification-service&lt;/b&gt;&lt;br&gt;Mail, WebSocket, Notifications&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="260" y="420" width="190" height="150" as="geometry" />
+    </mxCell>
+    <mxCell id="analytics" value="&lt;b&gt;analytics-service&lt;/b&gt;&lt;br&gt;Dashboard, Chatbot&lt;br&gt;&lt;br&gt;DB" style="swimlane;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#333333;fontSize=14;fontStyle=1;startSize=26;" vertex="1" parent="module">
+      <mxGeometry x="520" y="420" width="170" height="150" as="geometry" />
+    </mxCell>
+
+    <mxCell id="realtime" value="&lt;b&gt;Realtime Notify&lt;/b&gt;&lt;br&gt;Screen push" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#0050EF;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="module">
+      <mxGeometry x="820" y="420" width="160" height="80" as="geometry" />
+    </mxCell>
+    <mxCell id="rabbitmq" value="&lt;b&gt;RabbitMQ&lt;/b&gt;&lt;br&gt;tourism.events" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E6;strokeColor=#FA6800;strokeWidth=2;fontSize=14;fontStyle=1;" vertex="1" parent="module">
+      <mxGeometry x="820" y="540" width="160" height="80" as="geometry" />
+    </mxCell>
+
+    <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;&lt;font color='#000000'&gt;Black: API Gateway route&lt;/font&gt;&lt;br&gt;&lt;font color='#2D7600'&gt;Green: Feign client&lt;/font&gt;&lt;br&gt;&lt;font color='#0050EF'&gt;Blue: WebSocket / screen notification&lt;/font&gt;&lt;br&gt;&lt;font color='#FA6800'&gt;Orange: RabbitMQ message broker&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;fontSize=14;align=left;spacingLeft=10;" vertex="1" parent="module">
+      <mxGeometry x="40" y="630" width="360" height="100" as="geometry" />
+    </mxCell>
+
+    <mxCell id="edge-user-fe" value="" style="endArrow=none;html=1;rounded=0;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;" edge="1" parent="1" source="user" target="frontend">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="edge-fe-gateway" value="HTTP API" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="frontend" target="gateway">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="api-iam" value="/api/auth, /api/users" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="iam">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="api-tour" value="/api/tours, /api/reviews" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="tour">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="api-booking" value="/api/bookings, /api/coupons" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="booking">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="api-payment" value="/api/payment" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="payment">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="api-forum" value="/api/forum, /api/posts" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="forum">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="api-notification" value="/api/notifications" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="notification">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="api-analytics" value="/api/dashboard, /api/chatbot" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#000000;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="analytics">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="feign-booking-tour" value="Feign" style="endArrow=classic;startArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="booking" target="tour">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-booking-payment" value="Feign" style="endArrow=classic;startArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="booking" target="payment">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-booking-iam" value="Coin Feign" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="booking" target="iam">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-booking-notification" value="Feign fallback" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="booking" target="notification">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-iam-notification" value="Feign" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="iam" target="notification">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-forum-iam" value="Feign" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="forum" target="iam">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-analytics-services" value="Feign dashboard/chatbot" style="endArrow=classic;startArrow=none;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="analytics" target="booking">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="feign-analytics-tour" value="Feign" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#2D7600;fillColor=#60A917;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="analytics" target="tour">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="rabbit-booking" value="booking.notification.*, booking.analytics.*" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#FA6800;fillColor=#FA6800;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="booking" target="rabbitmq">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="rabbit-forum" value="forum.notification.*" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#FA6800;fillColor=#FA6800;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="forum" target="rabbitmq">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="rabbit-to-notification" value="consume" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#FA6800;fillColor=#FA6800;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="rabbitmq" target="notification">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="ws-gateway-notification" value="/ws/**" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#0050EF;fillColor=#0050EF;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="gateway" target="notification">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="ws-notification-realtime" value="WebSocket topics" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#0050EF;fillColor=#0050EF;strokeWidth=2;fontSize=12;" edge="1" parent="module" source="notification" target="realtime">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="ws-realtime-fe" value="Screen notify" style="endArrow=classic;html=1;rounded=1;dashed=1;dashPattern=8 8;strokeColor=#0050EF;fillColor=#0050EF;strokeWidth=2;fontSize=12;" edge="1" parent="1" source="realtime" target="frontend">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>

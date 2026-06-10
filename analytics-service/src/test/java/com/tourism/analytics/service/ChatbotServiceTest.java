@@ -48,6 +48,12 @@ class ChatbotServiceTest {
     @Mock
     private IntentRouter intentRouter;
 
+    @Mock
+    private TourFactAnswerService tourFactAnswerService;
+
+    @Mock
+    private TourRankingAnswerService tourRankingAnswerService;
+
     @InjectMocks
     private ChatbotService chatbotService;
 
@@ -70,6 +76,8 @@ class ChatbotServiceTest {
                         .confidence(0.3)
                         .build());
         lenient().when(bookingService.handle(any(ChatMessageRequest.class), any(ConversationState.class))).thenReturn(null);
+        lenient().when(tourFactAnswerService.tryAnswer(anyString(), anyString(), any(ConversationState.class))).thenReturn(null);
+        lenient().when(tourRankingAnswerService.tryAnswer(anyString(), anyString(), any(ConversationState.class))).thenReturn(null);
     }
 
     // ─────────────────────────────────────────────
@@ -81,6 +89,7 @@ class ChatbotServiceTest {
         // Arrange: mock Pinecone search
         VectorDocumentDTO doc = buildTourDoc(1, "HN001", "Tour Hà Nội", 2500000.0, 0.9f);
         when(vectorService.searchSimilar(anyString(), anyInt())).thenReturn(List.of(doc));
+        mockTourSearchIntent();
 
         // Mock Gemini response
         mockGeminiResponse("Tour Hà Nội rất phù hợp cho gia đình.");
@@ -251,6 +260,7 @@ class ChatbotServiceTest {
         );
         when(vectorService.searchSimilar(anyString(), anyInt())).thenReturn(docs);
         mockGeminiResponse("Kết quả tìm kiếm");
+        mockTourSearchIntent();
 
         // Act
         ChatMessageResponse response = chatbotService.handleUserMessage(
@@ -284,6 +294,20 @@ class ChatbotServiceTest {
     // Helpers
     // ─────────────────────────────────────────────
 
+    @Test
+    void handleUserMessage_commonCancelPolicy_returnsStaticAnswerWithoutRag() {
+        ChatMessageResponse response = chatbotService.handleUserMessage(
+                ChatMessageRequest.builder()
+                        .message("chinh sach huy tour nhu the nao")
+                        .sessionId("session-policy")
+                        .build()
+        );
+
+        assertThat(response.getReply()).contains("10%", "50%", "70%", "90%");
+        verify(vectorService, never()).searchSimilar(anyString(), anyInt());
+        verify(restTemplate, never()).postForEntity(anyString(), any(HttpEntity.class), eq(Map.class));
+    }
+
     private VectorDocumentDTO buildTourDoc(Integer tourId, String tourCode, String tourName,
                                             Double price, Float score) {
         Map<String, Object> meta = new HashMap<>();
@@ -312,6 +336,16 @@ class ChatbotServiceTest {
 
         when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(body));
+    }
+
+    private void mockTourSearchIntent() {
+        when(intentRouter.route(anyString(), any(ConversationState.class))).thenReturn(
+                IntentResult.builder()
+                        .intent(IntentResult.Intent.TOUR_RETRIEVAL)
+                        .retrievalTask(IntentResult.RetrievalTask.SEARCH)
+                        .rawSource("test")
+                        .confidence(0.9)
+                        .build());
     }
 
     private void injectField(Object target, String fieldName, Object value) throws Exception {

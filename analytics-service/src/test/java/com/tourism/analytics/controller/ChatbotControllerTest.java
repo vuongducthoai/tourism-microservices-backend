@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tourism.analytics.dto.ChatMessageRequest;
 import com.tourism.analytics.dto.ChatMessageResponse;
 import com.tourism.analytics.service.ChatbotService;
+import com.tourism.analytics.service.ChatbotVectorSyncRunService;
 import com.tourism.analytics.service.VectorService;
 import com.tourism.analytics.service.VectorSyncService;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,9 @@ class ChatbotControllerTest {
 
     @MockBean
     private VectorService vectorService;
+
+    @MockBean
+    private ChatbotVectorSyncRunService syncRunService;
 
     // ─────────────────────────────────────────────
     // POST /api/chatbot/chat

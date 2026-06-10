@@ -3,6 +3,7 @@ package com.tourism.analytics.controller;
 import com.tourism.analytics.dto.ChatMessageRequest;
 import com.tourism.analytics.dto.ChatMessageResponse;
 import com.tourism.analytics.service.ChatbotService;
+import com.tourism.analytics.service.ChatbotVectorSyncRunService;
 import com.tourism.analytics.service.VectorService;
 import com.tourism.analytics.service.VectorSyncService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +38,7 @@ public class ChatbotController {
     private final ChatbotService    chatbotService;
     private final VectorSyncService vectorSyncService;
     private final VectorService     vectorService;
+    private final ChatbotVectorSyncRunService syncRunService;
 
     // ─────────────────────────────────────────────
     // 1. CHAT (public)
@@ -113,6 +115,7 @@ public class ChatbotController {
         log.warn("⚠️ Admin triggered clear ALL vectors");
         try {
             vectorService.deleteAll();
+            syncRunService.recordClearSuccess();
             return ResponseEntity.ok(Map.of(
                     "status",  "success",
                     "message", "Đã xoá toàn bộ vector. Cần chạy sync lại.",

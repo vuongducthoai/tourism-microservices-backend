@@ -12,6 +12,7 @@ import com.tourism.tourcatalog.repository.PolicyTemplateRepository;
 import com.tourism.tourcatalog.repository.TourDepartureRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
 import com.tourism.tourcatalog.service.AdminDepartureService;
+import com.tourism.tourcatalog.service.ChatbotSyncEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -35,6 +36,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
     private final TourDepartureRepository departureRepository;
     private final TourRepository tourRepository;
     private final PolicyTemplateRepository policyTemplateRepository;
+    private final ChatbotSyncEventPublisher chatbotSyncEventPublisher;
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_DATE_TIME;
     private static final DateTimeFormatter DISPLAY_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
@@ -133,6 +135,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         }
 
         TourDeparture saved = departureRepository.save(departure);
+        chatbotSyncEventPublisher.publish("departure", saved.getDepartureID(), saved.getTour().getTourID(), "CREATE");
         return toDetailResponse(saved);
     }
 
@@ -183,6 +186,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         }
 
         TourDeparture updated = departureRepository.save(departure);
+        chatbotSyncEventPublisher.publish("departure", updated.getDepartureID(), updated.getTour().getTourID(), "UPDATE");
         return toDetailResponse(updated);
     }
 
@@ -193,6 +197,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
                 .orElseThrow(() -> new RuntimeException("Departure not found: " + id));
         departure.setIsDeleted(true);
         departureRepository.save(departure);
+        chatbotSyncEventPublisher.publish("departure", departure.getDepartureID(), departure.getTour().getTourID(), "DELETE");
     }
 
     @Override
@@ -245,6 +250,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         }
 
         TourDeparture saved = departureRepository.save(cloned);
+        chatbotSyncEventPublisher.publish("departure", saved.getDepartureID(), saved.getTour().getTourID(), "CREATE");
         return toDetailResponse(saved);
     }
 

@@ -12,6 +12,7 @@ import com.tourism.tourcatalog.exception.DuplicateResourceException;
 import com.tourism.tourcatalog.exception.ResourceInUseException;
 import com.tourism.tourcatalog.exception.ResourceNotFoundException;
 import com.tourism.tourcatalog.repository.LocationRepository;
+import com.tourism.tourcatalog.service.ChatbotSyncEventPublisher;
 import com.tourism.tourcatalog.service.FileStorageService;
 import com.tourism.tourcatalog.service.LocationService;
 import com.tourism.tourcatalog.util.VietnamAirportUtils;
@@ -38,6 +39,7 @@ public class LocationServiceImpl implements LocationService {
     private final LocationRepository locationRepository;
     private final ModelMapper modelMapper;
     private final FileStorageService fileStorageService;
+    private final ChatbotSyncEventPublisher chatbotSyncEventPublisher;
 
     @Override
     @Transactional(readOnly = true)
@@ -160,7 +162,9 @@ public class LocationServiceImpl implements LocationService {
         location.setAirportCode(request.getAirportCode());
         location.setAirportName(request.getAirportName());
         location.setImage(request.getImage());
-        return mapToAdminResponse(locationRepository.save(location));
+        Location saved = locationRepository.save(location);
+        chatbotSyncEventPublisher.publish("location", saved.getLocationID(), null, "CREATE");
+        return mapToAdminResponse(saved);
     }
 
     @Override
@@ -193,7 +197,9 @@ public class LocationServiceImpl implements LocationService {
         location.setAirportName(request.getAirportName());
         if (request.getImage() != null) location.setImage(request.getImage());
 
-        return mapToAdminResponse(locationRepository.save(location));
+        Location saved = locationRepository.save(location);
+        chatbotSyncEventPublisher.publish("location", saved.getLocationID(), null, "UPDATE");
+        return mapToAdminResponse(saved);
     }
 
     @Override
@@ -211,6 +217,7 @@ public class LocationServiceImpl implements LocationService {
         }
         location.setStatus(false);
         locationRepository.save(location);
+        chatbotSyncEventPublisher.publish("location", location.getLocationID(), null, "DELETE");
     }
 
     @Override
@@ -220,6 +227,7 @@ public class LocationServiceImpl implements LocationService {
         String imageUrl = fileStorageService.saveFile(file);
         location.setImage(imageUrl);
         locationRepository.save(location);
+        chatbotSyncEventPublisher.publish("location", location.getLocationID(), null, "UPDATE");
         return imageUrl;
     }
 
