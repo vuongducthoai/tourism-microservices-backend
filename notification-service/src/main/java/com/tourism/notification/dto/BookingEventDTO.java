@@ -66,6 +66,10 @@ public class BookingEventDTO implements Serializable {
     // User reference
     private Integer userId;
 
+    // Green Fund (GREEN_FUND_THANKS)
+    private BigDecimal greenFundCoins;   // số coin user vừa góp
+    private Long       greenFundTrees;   // tổng số cây user đã góp (lũy kế)
+
     // ── RabbitMQ routing fields ──────────────────────────────────────────────
 
     /**

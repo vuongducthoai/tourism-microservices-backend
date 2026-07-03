@@ -1,0 +1,44 @@
+<mxfile host="app.diagrams.net" modified="2026-06-11T00:00:00.000Z" agent="claude" version="24.0.0">
+  <diagram id="seq-dang-xuat" name="Dang xuat">
+    <mxGraphModel dx="1400" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="720" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="frame" value="sd  Đăng xuất (Logout)" style="shape=umlFrame;whiteSpace=wrap;html=1;width=200;height=26;fillColor=none;strokeColor=#000000;verticalAlign=top;align=left;fontSize=13;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="20" y="8" width="1130" height="630" as="geometry"/></mxCell>
+
+        <mxCell id="act_user" value="User" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontSize=12;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="95" y="40" width="30" height="50" as="geometry"/></mxCell>
+        <mxCell id="line_user" value="" style="html=1;endArrow=none;dashed=1;strokeColor=#000000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="110" y="92" as="sourcePoint"/><mxPoint x="110" y="585" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="ll_hdr" value="hdr : Header (UI)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="230" y="40" width="140" height="545" as="geometry"/></mxCell>
+        <mxCell id="ll_gw" value="gw : ApiGateway" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="470" y="40" width="140" height="545" as="geometry"/></mxCell>
+        <mxCell id="ll_iam" value="iam : IamService (AuthService)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="710" y="40" width="140" height="545" as="geometry"/></mxCell>
+        <mxCell id="ll_kc" value="kc : Keycloak &#171;external&#187;" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="950" y="40" width="140" height="545" as="geometry"/></mxCell>
+
+        <mxCell id="a_user" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="105" y="110" width="10" height="435" as="geometry"/></mxCell>
+        <mxCell id="a_hdr" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="295" y="110" width="10" height="435" as="geometry"/></mxCell>
+        <mxCell id="a_gw" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="535" y="145" width="10" height="305" as="geometry"/></mxCell>
+        <mxCell id="a_iam" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="775" y="180" width="10" height="235" as="geometry"/></mxCell>
+        <mxCell id="a_kc" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="1015" y="215" width="10" height="137" as="geometry"/></mxCell>
+
+        <mxCell id="m1" value="1: bấm Đăng xuất" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="110" y="110" as="sourcePoint"/><mxPoint x="295" y="110" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m2" value="2: POST /api/auth/logout {refreshToken}" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="305" y="145" as="sourcePoint"/><mxPoint x="535" y="145" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m3" value="3: logout(refreshToken)" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="545" y="180" as="sourcePoint"/><mxPoint x="775" y="180" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m4" value="4: POST /realms/.../logout — revoke session (client_id, secret, refresh_token)" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="785" y="215" as="sourcePoint"/><mxPoint x="1015" y="215" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="alt" value="alt" style="shape=umlFrame;whiteSpace=wrap;html=1;width=60;height=22;fillColor=none;strokeColor=#000000;verticalAlign=top;align=left;fontSize=12;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="690" y="245" width="420" height="135" as="geometry"/></mxCell>
+        <mxCell id="g1" value="[ thu hồi session thành công ]" style="text;html=1;align=left;fontStyle=2;fontSize=11;labelBackgroundColor=#ffffff;" vertex="1" parent="1"><mxGeometry x="698" y="268" width="280" height="18" as="geometry"/></mxCell>
+        <mxCell id="m41" value="4.1: 204 No Content" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1015" y="290" as="sourcePoint"/><mxPoint x="785" y="290" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="dv1" value="" style="html=1;endArrow=none;dashed=1;strokeColor=#000000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="690" y="315" as="sourcePoint"/><mxPoint x="1110" y="315" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="g2" value="[ Keycloak lỗi → bỏ qua, log warn ]" style="text;html=1;align=left;fontStyle=2;fontSize=11;labelBackgroundColor=#ffffff;" vertex="1" parent="1"><mxGeometry x="698" y="319" width="300" height="18" as="geometry"/></mxCell>
+        <mxCell id="m42" value="4.2: lỗi (vẫn tiếp tục logout cục bộ)" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1015" y="350" as="sourcePoint"/><mxPoint x="785" y="350" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="m5" value="5: 200 OK {message: Đăng xuất thành công}" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="775" y="415" as="sourcePoint"/><mxPoint x="545" y="415" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m6" value="6: 200 OK" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="535" y="450" as="sourcePoint"/><mxPoint x="305" y="450" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m7" value="7: xoá token (AuthContext + localStorage)" style="html=1;align=left;spacingLeft=4;endArrow=block;endFill=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="305" y="480" as="sourcePoint"/><mxPoint x="305" y="513" as="targetPoint"/><Array as="points"><mxPoint x="355" y="480"/><mxPoint x="355" y="513"/></Array></mxGeometry></mxCell>
+        <mxCell id="m8" value="8: điều hướng về trang chủ / đăng nhập" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="295" y="545" as="sourcePoint"/><mxPoint x="115" y="545" as="targetPoint"/></mxGeometry></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

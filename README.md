@@ -77,6 +77,8 @@ docker-compose down
 docker-compose down -v
 ```
 
+> Muốn giữ dữ liệu thì chỉ dùng `docker-compose down` hoặc `docker-compose up -d --build`; tránh dùng `-v` vì nó xóa named volumes của PostgreSQL, Redis, RabbitMQ và Keycloak.
+
 ---
 
 ## 🔧 Chạy từng service riêng lẻ

@@ -25,10 +25,10 @@
 
 | Khái niệm | Giá trị (cấu hình) | Ghi chú |
 |---|---|---|
-| **Chi phí 1 cây** | **20.000đ** (= 20 coin) | Cấu hình `greenfund.cost-per-tree`. Con số minh họa. |
-| **Trích từ booking** | **0.5% giá trị booking** (hoặc 5.000đ/khách — chọn 1) | `greenfund.booking-contribution`. Lấy từ doanh thu công ty, KHÔNG tính thêm vào tiền khách. |
+| **Chi phí 1 cây** | **1.000đ** (= 1 coin) | Cấu hình `greenfund.cost-per-tree`. Con số minh họa. |
+| **Trích từ booking** | **0.5% giá trị booking** (hoặc 1.000đ/khách — chọn 1) | `greenfund.booking-contribution`. Lấy từ doanh thu công ty, KHÔNG tính thêm vào tiền khách. |
 | **Quyên góp bằng coin** | tối thiểu **1 coin** (1.000đ), bội số tùy ý | User tự nguyện, trừ thẳng coinBalance. |
-| **Quy đổi quỹ → cây** | đủ 20.000đ quỹ → +1 cây "đã trồng" | Scheduler gộp quỹ tích lũy → tăng `treesPlanted`. |
+| **Quy đổi quỹ → cây** | đủ 1.000đ quỹ → +1 cây "đã trồng" | Scheduler gộp quỹ tích lũy → tăng `treesPlanted`. |
 
 > Tất cả số liệu là **config** (`application.yml` / bảng config), chỉnh không cần sửa code.
 

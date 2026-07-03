@@ -51,7 +51,7 @@ spring:
         - id: booking-service
           uri: lb://booking-service
           predicates:
-            - Path=/api/bookings/**, /api/coupons/**, /api/admin/bookings/**, /api/admin/coupons/**, /api/consultations/**, /api/admin/consultations/**
+            - Path=/api/bookings/**, /api/coupons/**, /api/admin/bookings/**, /api/admin/coupons/**, /api/consultations/**, /api/admin/consultations/**, /api/green-fund/**, /api/admin/green-fund/**
           filters:
             - StripPrefix=0
 

@@ -31,15 +31,27 @@ public class ConsultationRequest extends BaseEntity {
     private String requestCode;
 
     // Người gửi
-    @Column(name = "full_name", nullable = false)         private String fullName;
-    @Column(nullable = false, length = 20)                private String phone;
-    @Column(nullable = false)                             private String email;
-    @Column(name = "user_id")                             private Integer userId;
+    @Column(name = "full_name", nullable = false)         
+    private String fullName;
+
+    @Column(nullable = false, length = 20)                
+    private String phone;
+
+    @Column(nullable = false)                             
+    private String email;
+
+    @Column(name = "user_id")                             
+    private Integer userId;
 
     // Nội dung tư vấn
-    @Column(name = "tour_id")                             private Integer tourId;
-    @Column(name = "tour_code", length = 50)              private String tourCode;
-    @Column(name = "tour_name")                           private String tourName;
+    @Column(name = "tour_id")                             
+    private Integer tourId;
+
+    @Column(name = "tour_code", length = 50)             
+    private String tourCode;
+
+    @Column(name = "tour_name")                           
+    private String tourName;
 
     @Column(name = "consultation_info", columnDefinition = "TEXT")
     private String consultationInfo;
@@ -50,8 +62,11 @@ public class ConsultationRequest extends BaseEntity {
     @Builder.Default
     private ConsultationStatus status = ConsultationStatus.PENDING;
 
-    @Column(name = "admin_id")        private Integer adminId;
-    @Column(name = "admin_email")     private String adminEmail;
+    @Column(name = "admin_id")        
+    private Integer adminId;
+
+    @Column(name = "admin_email")     
+    private String adminEmail;
 
     @Column(name = "admin_notes", columnDefinition = "TEXT")
     private String adminNotes;

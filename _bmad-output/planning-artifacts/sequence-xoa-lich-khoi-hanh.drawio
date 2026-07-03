@@ -1,0 +1,46 @@
+<mxfile host="app.diagrams.net" modified="2026-06-11T00:00:00.000Z" agent="claude" version="24.0.0">
+  <diagram id="seq-delete-departure" name="Xoa lich khoi hanh">
+    <mxGraphModel dx="1400" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1050" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="frame" value="sd  Xóa lịch khởi hành (Admin — soft delete)" style="shape=umlFrame;whiteSpace=wrap;html=1;width=340;height=26;fillColor=none;strokeColor=#000000;verticalAlign=top;align=left;fontSize=13;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="20" y="8" width="980" height="770" as="geometry"/></mxCell>
+
+        <mxCell id="act_admin" value="Admin" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontSize=12;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="93" y="40" width="34" height="50" as="geometry"/></mxCell>
+        <mxCell id="line_admin" value="" style="html=1;endArrow=none;dashed=1;strokeColor=#000000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="110" y="92" as="sourcePoint"/><mxPoint x="110" y="730" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="ll_dl" value="dl : DepartureList (Admin UI)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="240" y="40" width="140" height="690" as="geometry"/></mxCell>
+        <mxCell id="ll_gw" value="gw : ApiGateway" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="520" y="40" width="140" height="690" as="geometry"/></mxCell>
+        <mxCell id="ll_tc" value="tc : TourCatalogService" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=0;collapsible=0;recursiveResize=0;outlineConnect=0;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="800" y="40" width="140" height="690" as="geometry"/></mxCell>
+
+        <mxCell id="note_nf" value="findById ném 404 nếu không tồn tại; xóa departure KHÔNG kiểm tra ràng buộc đang dùng" style="shape=note;whiteSpace=wrap;html=1;fontSize=10;align=left;spacingLeft=6;fillColor=#ffffff;strokeColor=#000000;size=12;" vertex="1" parent="1"><mxGeometry x="410" y="90" width="320" height="44" as="geometry"/></mxCell>
+
+        <mxCell id="a_admin" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="105" y="110" width="10" height="555" as="geometry"/></mxCell>
+        <mxCell id="a_dl" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="305" y="110" width="10" height="555" as="geometry"/></mxCell>
+        <mxCell id="a_gw" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="585" y="220" width="10" height="412" as="geometry"/></mxCell>
+        <mxCell id="a_tc" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1"><mxGeometry x="865" y="255" width="10" height="342" as="geometry"/></mxCell>
+
+        <mxCell id="m1" value="1: bấm Xóa lịch khởi hành" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="110" y="110" as="sourcePoint"/><mxPoint x="305" y="110" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m2" value="2: hiển thị hộp thoại xác nhận xóa" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="305" y="145" as="sourcePoint"/><mxPoint x="115" y="145" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m3" value="3: xác nhận Xóa" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="110" y="185" as="sourcePoint"/><mxPoint x="305" y="185" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m4" value="4: DELETE /api/admin/departures/{id}" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="305" y="220" as="sourcePoint"/><mxPoint x="585" y="220" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m5" value="5: deleteDeparture(id)" style="html=1;verticalAlign=bottom;endArrow=block;endFill=1;endSize=10;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="595" y="255" as="sourcePoint"/><mxPoint x="865" y="255" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m6" value="6: findById(id) — DB" style="html=1;align=left;spacingLeft=4;endArrow=block;endFill=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="875" y="290" as="sourcePoint"/><mxPoint x="875" y="323" as="targetPoint"/><Array as="points"><mxPoint x="925" y="290"/><mxPoint x="925" y="323"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="alt" value="alt" style="shape=umlFrame;whiteSpace=wrap;html=1;width=60;height=22;fillColor=none;strokeColor=#000000;verticalAlign=top;align=left;fontSize=12;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="350" width="940" height="345" as="geometry"/></mxCell>
+        <mxCell id="g1" value="[ tìm thấy lịch khởi hành ]" style="text;html=1;align=left;fontStyle=2;fontSize=11;labelBackgroundColor=#ffffff;" vertex="1" parent="1"><mxGeometry x="48" y="373" width="280" height="18" as="geometry"/></mxCell>
+        <mxCell id="m61" value="6.1: set isDeleted = true (soft delete), lưu — DB" style="html=1;align=left;spacingLeft=4;endArrow=block;endFill=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="875" y="395" as="sourcePoint"/><mxPoint x="875" y="428" as="targetPoint"/><Array as="points"><mxPoint x="925" y="395"/><mxPoint x="925" y="428"/></Array></mxGeometry></mxCell>
+        <mxCell id="m62" value="6.2: 200 OK {message: Departure deleted successfully}" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="865" y="460" as="sourcePoint"/><mxPoint x="595" y="460" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m63" value="6.3: 200 OK" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="585" y="495" as="sourcePoint"/><mxPoint x="315" y="495" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m64" value="6.4: thông báo xóa thành công, refresh danh sách" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="305" y="530" as="sourcePoint"/><mxPoint x="115" y="530" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="dv" value="" style="html=1;endArrow=none;dashed=1;strokeColor=#000000;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="40" y="560" as="sourcePoint"/><mxPoint x="980" y="560" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="g2" value="[ không tồn tại ]" style="text;html=1;align=left;fontStyle=2;fontSize=11;labelBackgroundColor=#ffffff;" vertex="1" parent="1"><mxGeometry x="48" y="564" width="220" height="18" as="geometry"/></mxCell>
+        <mxCell id="m65" value="6.5: RuntimeException 'Departure not found'" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="865" y="595" as="sourcePoint"/><mxPoint x="595" y="595" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m66" value="6.6: 404 Not Found" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="585" y="630" as="sourcePoint"/><mxPoint x="315" y="630" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m67" value="6.7: báo lỗi không tìm thấy lịch khởi hành" style="html=1;verticalAlign=bottom;endArrow=open;dashed=1;endSize=8;rounded=0;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="305" y="665" as="sourcePoint"/><mxPoint x="115" y="665" as="targetPoint"/></mxGeometry></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

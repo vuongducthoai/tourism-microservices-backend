@@ -234,4 +234,24 @@ public class NotificationServiceImpl implements NotificationService {
                 event.getBookingCode(), event.getContactFullName(), event.getTourCode());
         webSocketService.notifyAdminConsultation(event);
     }
+
+    @Override
+    public void handleGreenFundThanks(BookingEventDTO event) {
+        log.info("Handling green-fund-thanks for user: {}", event.getUserId());
+        if (event.getUserId() == null) return;
+
+        String coins = event.getGreenFundCoins() != null
+                ? event.getGreenFundCoins().stripTrailingZeros().toPlainString() : "?";
+        String trees = event.getGreenFundTrees() != null
+                ? String.valueOf(event.getGreenFundTrees()) : "?";
+
+        saveNotification(
+                event.getUserId(),
+                NotificationType.GREEN_FUND_THANKS,
+                "Cảm ơn bạn đã góp trồng cây 🌳",
+                String.format("Bạn vừa góp %s coin vào Quỹ Trồng Cây Xanh. " +
+                        "Tổng cộng bạn đã góp trồng %s cây — cảm ơn vì một Việt Nam xanh hơn!",
+                        coins, trees)
+        );
+    }
 }
