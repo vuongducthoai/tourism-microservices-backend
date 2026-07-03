@@ -55,6 +55,16 @@ feign:
         connectTimeout: 5000
         readTimeout: 5000
 
+# ── Quỹ Trồng Cây Xanh (PLAN_GREEN_FUND_TRONG_CAY) ──
+greenfund:
+  enabled: true
+  cost-per-tree: 1000                  # VND/cây (= 1 coin)
+  booking-contribution-percent: 0.5    # trích 0.5% giá trị booking PAID (từ doanh thu, KHÔNG thu thêm khách)
+  min-donation-coin: 1                 # góp tối thiểu 1 coin
+  convert-interval-ms: 3600000         # quy đổi quỹ -> cây mỗi 1 giờ
+  target-trees: 1000                   # mục tiêu số cây (progress bar dashboard)
+  target-label: "Mục tiêu 2026"        # nhãn mục tiêu hiển thị
+
 management:
   endpoints:
     web:

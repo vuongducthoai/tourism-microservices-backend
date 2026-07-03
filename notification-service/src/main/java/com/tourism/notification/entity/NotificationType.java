@@ -43,4 +43,7 @@ public enum NotificationType {
     // Admin thu hồi coin thưởng forum (PLAN_ADMIN_FORUM_COIN)
     COIN_REVOKED,
 
+    // Cảm ơn góp Quỹ Trồng Cây Xanh (PLAN_GREEN_FUND_TRONG_CAY)
+    GREEN_FUND_THANKS,
+
 }

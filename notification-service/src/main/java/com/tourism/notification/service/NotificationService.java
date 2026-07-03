@@ -26,4 +26,7 @@ public interface NotificationService {
 
     /** Yêu cầu tư vấn mới — push admin WebSocket. */
     void handleConsultationCreated(BookingEventDTO event);
+
+    /** Cảm ơn user góp coin vào Quỹ Trồng Cây Xanh. */
+    void handleGreenFundThanks(BookingEventDTO event);
 }

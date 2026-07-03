@@ -64,6 +64,7 @@ public class BookingServiceImpl implements BookingService {
     private final BookingConverter            bookingConverter;
     private final SepayService               sepayService;
     private final ObjectMapper               objectMapper;
+    private final com.tourism.booking.service.GreenFundService greenFundService;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
 
@@ -696,6 +697,9 @@ public class BookingServiceImpl implements BookingService {
                 BookingEventDTO dto = buildBaseEventDto(saved, res, "PAID",
                         null, null, null, null, null);
                 outboxRepository.save(OutboxEventFactory.notification(dto, "BOOKING_CONFIRMED", objectMapper));
+
+                // ── Quỹ Xanh: trích % doanh thu vào quỹ trồng cây (fail-open, idempotent) ──
+                greenFundService.contributeFromBooking(saved);
 
                 log.info("Admin confirmed booking {} → PAID, notification queued", booking.getBookingCode());
                 return res;
