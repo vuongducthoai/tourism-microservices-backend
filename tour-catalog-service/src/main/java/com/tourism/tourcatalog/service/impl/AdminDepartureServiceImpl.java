@@ -4,10 +4,13 @@ import com.tourism.tourcatalog.dto.request.admin.CreateDepartureRequest;
 import com.tourism.tourcatalog.dto.request.admin.DeparturePricingRequest;
 import com.tourism.tourcatalog.dto.request.admin.DepartureTransportRequest;
 import com.tourism.tourcatalog.dto.response.admin.AdminDepartureDetailResponse;
+import com.tourism.tourcatalog.dto.response.admin.AdminDepartureGroupResponse;
 import com.tourism.tourcatalog.dto.response.admin.AdminDeparturePricingItem;
 import com.tourism.tourcatalog.dto.response.admin.AdminDepartureListItem;
 import com.tourism.tourcatalog.dto.response.admin.AdminDepartureTransportItem;
 import com.tourism.tourcatalog.entity.*;
+import com.tourism.tourcatalog.feign.BookingFeignClient;
+import com.tourism.tourcatalog.feign.dto.DepartureBookedCountResponse;
 import com.tourism.tourcatalog.repository.PolicyTemplateRepository;
 import com.tourism.tourcatalog.repository.TourDepartureRepository;
 import com.tourism.tourcatalog.repository.TourRepository;
@@ -37,6 +40,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
     private final TourRepository tourRepository;
     private final PolicyTemplateRepository policyTemplateRepository;
     private final ChatbotSyncEventPublisher chatbotSyncEventPublisher;
+    private final BookingFeignClient bookingFeignClient;
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_DATE_TIME;
     private static final DateTimeFormatter DISPLAY_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
@@ -70,11 +74,82 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
                 .map(this::toListItem)
                 .collect(Collectors.toList());
 
+        // Điền số khách "đã đặt" thật từ booking-service (1 lần cho cả trang)
+        fillBookedCounts(items);
+
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("data", items);
         result.put("totalPages", departurePage.getTotalPages());
         result.put("totalItems", departurePage.getTotalElements());
+        return result;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getGroupedDepartures(int page, int size, Boolean status, String startDate, String endDate) {
+        // 1) Lấy toàn bộ lịch khớp bộ lọc (dữ liệu nhỏ nên gộp trong bộ nhớ là đủ)
+        List<TourDeparture> all;
+        if (startDate != null && endDate != null) {
+            LocalDateTime start = LocalDateTime.parse(startDate, ISO_FORMATTER);
+            LocalDateTime end = LocalDateTime.parse(endDate, ISO_FORMATTER);
+            all = (status != null)
+                    ? departureRepository.findAllByStatusAndIsDeletedFalseAndDepartureDateBetweenOrderByDepartureDateAsc(status, start, end)
+                    : departureRepository.findAllByIsDeletedFalseAndDepartureDateBetweenOrderByDepartureDateAsc(start, end);
+        } else {
+            all = (status != null)
+                    ? departureRepository.findAllByStatusAndIsDeletedFalseOrderByDepartureDateAsc(status)
+                    : departureRepository.findAllByIsDeletedFalseOrderByDepartureDateAsc();
+        }
+
+        // 2) Map sang list item + điền số khách đã đặt (1 lần cho tất cả)
+        List<AdminDepartureListItem> items = all.stream().map(this::toListItem).collect(Collectors.toList());
+        fillBookedCounts(items);
+
+        // 3) Gộp theo tour (giữ thứ tự xuất hiện = theo ngày khởi hành gần nhất)
+        Map<Integer, AdminDepartureGroupResponse> groupMap = new LinkedHashMap<>();
+        for (AdminDepartureListItem item : items) {
+            AdminDepartureGroupResponse g = groupMap.computeIfAbsent(item.getTourID(), k ->
+                    AdminDepartureGroupResponse.builder()
+                            .tourID(item.getTourID())
+                            .tourCode(item.getTourCode())
+                            .tourName(item.getTourName())
+                            .tourDuration(item.getTourDuration())
+                            .departureCount(0)
+                            .activeCount(0)
+                            .totalAvailableSlots(0)
+                            .totalBooked(0)
+                            .lowestPrice(null)
+                            .nextDepartureDate(item.getDepartureDate())
+                            .departures(new ArrayList<>())
+                            .build());
+            g.getDepartures().add(item);
+            g.setDepartureCount(g.getDepartureCount() + 1);
+            if (Boolean.TRUE.equals(item.getStatus())) g.setActiveCount(g.getActiveCount() + 1);
+            g.setTotalAvailableSlots(g.getTotalAvailableSlots() + (item.getAvailableSlots() != null ? item.getAvailableSlots() : 0));
+            g.setTotalBooked(g.getTotalBooked() + (item.getTotalBookings() != null ? item.getTotalBookings() : 0));
+            if (item.getLowestPrice() != null && item.getLowestPrice().signum() > 0) {
+                if (g.getLowestPrice() == null || item.getLowestPrice().compareTo(g.getLowestPrice()) < 0) {
+                    g.setLowestPrice(item.getLowestPrice());
+                }
+            }
+        }
+
+        List<AdminDepartureGroupResponse> groups = new ArrayList<>(groupMap.values());
+
+        // 4) Phân trang theo TOUR
+        int totalTours = groups.size();
+        int totalPages = size > 0 ? (int) Math.ceil((double) totalTours / size) : 1;
+        int from = Math.min(page * size, totalTours);
+        int to = Math.min(from + size, totalTours);
+        List<AdminDepartureGroupResponse> pageContent = groups.subList(from, to);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("data", pageContent);
+        result.put("totalPages", totalPages);
+        result.put("totalItems", totalTours);        // số tour
+        result.put("totalDepartures", items.size()); // tổng số lịch khớp lọc
         return result;
     }
 
@@ -86,7 +161,18 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         if (departure.getIsDeleted()) {
             throw new RuntimeException("Departure not found: " + id);
         }
-        return toDetailResponse(departure);
+        AdminDepartureDetailResponse response = toDetailResponse(departure);
+        // Số khách đã đặt thật của lịch này
+        try {
+            List<DepartureBookedCountResponse> counts =
+                    bookingFeignClient.getBookedCounts(List.of(id));
+            if (counts != null && !counts.isEmpty() && counts.get(0).getBookedPassengers() != null) {
+                response.setBookedSlots(counts.get(0).getBookedPassengers());
+            }
+        } catch (Exception e) {
+            log.warn("Không lấy được số khách đã đặt cho lịch {}: {}", id, e.getMessage());
+        }
+        return response;
     }
 
     @Override
@@ -97,7 +183,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
 
         TourDeparture departure = new TourDeparture();
         departure.setTour(tour);
-        departure.setDepartureDate(LocalDateTime.parse(request.getDepartureDate(), ISO_FORMATTER));
+        departure.setDepartureDate(parseFlexibleDateTime(request.getDepartureDate()));
         departure.setAvailableSlots(request.getAvailableSlots());
         departure.setStatus(request.getStatus() != null ? request.getStatus() : true);
         departure.setTourGuideInfo(request.getTourGuideInfo());
@@ -148,7 +234,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
             throw new RuntimeException("Departure not found: " + id);
         }
 
-        departure.setDepartureDate(LocalDateTime.parse(request.getDepartureDate(), ISO_FORMATTER));
+        departure.setDepartureDate(parseFlexibleDateTime(request.getDepartureDate()));
         departure.setAvailableSlots(request.getAvailableSlots());
         departure.setStatus(request.getStatus() != null ? request.getStatus() : true);
         departure.setTourGuideInfo(request.getTourGuideInfo());
@@ -211,7 +297,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
 
         TourDeparture cloned = new TourDeparture();
         cloned.setTour(original.getTour());
-        cloned.setDepartureDate(LocalDateTime.parse(newDepartureDate, ISO_FORMATTER));
+        cloned.setDepartureDate(parseFlexibleDateTime(newDepartureDate));
         cloned.setAvailableSlots(original.getAvailableSlots());
         cloned.setStatus(original.getStatus());
         cloned.setTourGuideInfo(original.getTourGuideInfo());
@@ -261,10 +347,35 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         transport.setVehicleName(req.getTransportCode());
         transport.setStartPoint(req.getStartPoint());
         transport.setEndPoint(req.getEndPoint());
-        transport.setDepartTime(LocalDateTime.parse(req.getDepartTime(), ISO_FORMATTER));
-        transport.setArrivalTime(LocalDateTime.parse(req.getArrivalTime(), ISO_FORMATTER));
+        transport.setDepartTime(parseFlexibleDateTime(req.getDepartTime()));
+        transport.setArrivalTime(parseFlexibleDateTime(req.getArrivalTime()));
         transport.setTourDeparture(departure);
         return transport;
+    }
+
+    // Danh sách định dạng ngày giờ chấp nhận (ISO lẫn dd/MM/yyyy, có/không giây, ngăn cách 'T' hoặc khoảng trắng)
+    private static final java.util.List<DateTimeFormatter> DATETIME_FORMATTERS = java.util.List.of(
+            DateTimeFormatter.ISO_DATE_TIME,                             // 2027-01-02T19:35:00
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"),          // 2027-01-02T19:35
+            DateTimeFormatter.ofPattern("dd/MM/yyyy'T'HH:mm:ss"),       // 02/01/2027T19:35:00
+            DateTimeFormatter.ofPattern("dd/MM/yyyy'T'HH:mm"),          // 02/01/2027T19:35
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),         // 02/01/2027 19:35:00
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")             // 02/01/2027 19:35
+    );
+
+    /**
+     * Parse chuỗi ngày giờ chấp nhận nhiều định dạng (ISO và dd/MM/yyyy).
+     * Tránh 500 khi FE gửi lại giờ vận chuyển/ngày ở định dạng hiển thị.
+     */
+    private LocalDateTime parseFlexibleDateTime(String value) {
+        if (value == null || value.isBlank()) return null;
+        String v = value.trim();
+        for (DateTimeFormatter f : DATETIME_FORMATTERS) {
+            try {
+                return LocalDateTime.parse(v, f);
+            } catch (Exception ignored) { /* thử định dạng kế tiếp */ }
+        }
+        throw new IllegalArgumentException("Định dạng ngày giờ không hợp lệ: " + value);
     }
 
     private String getAgeDescription(String passengerType) {
@@ -277,9 +388,39 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         };
     }
 
+    /** Gọi booking-service 1 lần để lấy số khách đã đặt của tất cả lịch trên trang. */
+    private void fillBookedCounts(List<AdminDepartureListItem> items) {
+        if (items == null || items.isEmpty()) return;
+        try {
+            List<Integer> ids = items.stream()
+                    .map(AdminDepartureListItem::getDepartureID)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            if (ids.isEmpty()) return;
+
+            Map<Integer, Integer> booked = new HashMap<>();
+            List<DepartureBookedCountResponse> counts = bookingFeignClient.getBookedCounts(ids);
+            if (counts != null) {
+                for (DepartureBookedCountResponse c : counts) {
+                    if (c.getDepartureId() != null) {
+                        booked.put(c.getDepartureId(),
+                                c.getBookedPassengers() != null ? c.getBookedPassengers() : 0);
+                    }
+                }
+            }
+            for (AdminDepartureListItem item : items) {
+                item.setTotalBookings(booked.getOrDefault(item.getDepartureID(), 0));
+            }
+        } catch (Exception e) {
+            // Không để lỗi booking-service làm hỏng trang; giữ mặc định 0
+            log.warn("Không lấy được số khách đã đặt: {}", e.getMessage());
+        }
+    }
+
     private AdminDepartureListItem toListItem(TourDeparture departure) {
         AdminDepartureListItem item = new AdminDepartureListItem();
         item.setDepartureID(departure.getDepartureID());
+        item.setTourID(departure.getTour().getTourID());
         item.setTourName(departure.getTour().getTourName());
         item.setTourCode(departure.getTour().getTourCode());
         item.setTourDuration(departure.getTour().getDuration());
@@ -288,11 +429,18 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
         item.setTotalBookings(0);
 
         if (departure.getPricings() != null && !departure.getPricings().isEmpty()) {
-            BigDecimal minPrice = departure.getPricings().stream()
+            // "Giá từ" = giá người lớn (ADULT). Nếu không có ADULT thì lấy giá thấp nhất.
+            BigDecimal adultPrice = departure.getPricings().stream()
+                    .filter(p -> "ADULT".equalsIgnoreCase(p.getPassengerType()))
                     .map(DeparturePricing::getSalePrice)
-                    .min(BigDecimal::compareTo)
-                    .orElse(BigDecimal.ZERO);
-            item.setLowestPrice(minPrice);
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElseGet(() -> departure.getPricings().stream()
+                            .map(DeparturePricing::getSalePrice)
+                            .filter(Objects::nonNull)
+                            .min(BigDecimal::compareTo)
+                            .orElse(BigDecimal.ZERO));
+            item.setLowestPrice(adultPrice);
         } else {
             item.setLowestPrice(BigDecimal.ZERO);
         }

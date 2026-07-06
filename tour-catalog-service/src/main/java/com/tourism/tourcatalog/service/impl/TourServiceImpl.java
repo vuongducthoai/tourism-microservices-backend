@@ -294,6 +294,25 @@ public class TourServiceImpl implements TourService {
                     .sorted(Comparator.comparing(TourDeparture::getDepartureDate))
                     .collect(Collectors.toList());
 
+            // Lấy coupon DEPARTURE tốt nhất (giảm nhiều nhất) cho tất cả lịch trong 1 lần gọi
+            java.util.Map<Integer, CouponBriefResponse> bestCouponByDeparture = new java.util.HashMap<>();
+            try {
+                java.util.List<Integer> depIds = validDepartures.stream()
+                        .map(TourDeparture::getDepartureID)
+                        .filter(java.util.Objects::nonNull)
+                        .collect(Collectors.toList());
+                if (!depIds.isEmpty()) {
+                    java.util.List<CouponBriefResponse> best = bookingFeignClient.getBestCouponsForDepartures(depIds);
+                    if (best != null) {
+                        for (CouponBriefResponse b : best) {
+                            if (b != null && b.getDepartureId() != null) {
+                                bestCouponByDeparture.put(b.getDepartureId(), b);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
             for (TourDeparture dep : validDepartures) {
                 // Lấy ADULT pricing
                 BigDecimal adultSalePrice = BigDecimal.ZERO;
@@ -306,18 +325,14 @@ public class TourServiceImpl implements TourService {
                             .orElse(BigDecimal.ZERO);
                 }
 
-                // Departure-specific coupon
+                // Coupon theo lịch: lấy coupon tốt nhất đã prefetch cho lịch này (nếu có)
                 String departureCouponCode = null;
                 BigDecimal departureCouponDiscount = BigDecimal.ZERO;
-                if (dep.getCouponId() != null) {
-                    try {
-                        CouponBriefResponse depCoupon = bookingFeignClient.getCouponByDepartureId(dep.getCouponId());
-                        if (depCoupon != null) {
-                            departureCouponCode = depCoupon.getCouponCode();
-                            departureCouponDiscount = depCoupon.getDiscountAmount() != null
-                                    ? BigDecimal.valueOf(depCoupon.getDiscountAmount()) : BigDecimal.ZERO;
-                        }
-                    } catch (Exception ignored) {}
+                CouponBriefResponse depCoupon = bestCouponByDeparture.get(dep.getDepartureID());
+                if (depCoupon != null && "DEPARTURE".equals(depCoupon.getCouponType())) {
+                    departureCouponCode = depCoupon.getCouponCode();
+                    departureCouponDiscount = depCoupon.getDiscountAmount() != null
+                            ? BigDecimal.valueOf(depCoupon.getDiscountAmount()) : BigDecimal.ZERO;
                 }
 
                 // Global coupon — tính trên giá sau khi trừ departure coupon

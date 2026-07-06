@@ -6,6 +6,8 @@ import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "coupons")
@@ -47,9 +49,19 @@ public class Coupon extends BaseEntity {
     @Column(name = "coupon_type", nullable = false)
     private CouponType couponType = CouponType.GLOBAL;
 
-    // Tham chiếu sang Tour Catalog Service bằng ID
+    // Tham chiếu sang Tour Catalog Service bằng ID (LEGACY — giữ tương thích; nguồn chuẩn là departureIds)
     @Column(name = "departure_id")
     private Integer departureId;
+
+    /**
+     * Nhiều lịch khởi hành mà coupon (loại DEPARTURE) áp dụng — quan hệ nhiều-nhiều.
+     * Một coupon có thể gắn nhiều lịch, và một lịch có thể có nhiều coupon.
+     * Bảng nối: coupon_departures(coupon_id, departure_id).
+     */
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "coupon_departures", joinColumns = @JoinColumn(name = "coupon_id"))
+    @Column(name = "departure_id")
+    private Set<Integer> departureIds = new HashSet<>();
 
 //    public boolean isValid() {
 //        LocalDateTime now = LocalDateTime.now();

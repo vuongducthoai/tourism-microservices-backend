@@ -33,7 +33,17 @@ public class GeminiAIServiceImpl implements GeminiAIService {
     private static final String GEMINI_API_BASE =
             "https://generativelanguage.googleapis.com/v1beta/models/";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    // RestTemplate có giới hạn thời gian: tránh treo vô hạn khi Gemini/mạng chậm,
+    // nhờ đó lời gọi luôn kết thúc sớm thay vì để giao diện chờ tới lúc time out.
+    private final RestTemplate restTemplate = buildRestTemplate();
+
+    private static RestTemplate buildRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);   // 5 giây để mở kết nối tới Gemini
+        factory.setReadTimeout(45000);     // tối đa 45 giây chờ Gemini trả lời
+        return new RestTemplate(factory);
+    }
 
     @Override
     public String generateDashboardSummary(String context) {
@@ -125,10 +135,11 @@ public class GeminiAIServiceImpl implements GeminiAIService {
             log.warn("Gemini API Key is missing — returning empty response");
             return "[]";
         }
-        // Try primary model, then fallback model, with simple retry on 503
+        // Thử model chính, nếu lỗi thì chuyển sang model dự phòng (nhẹ, nhanh hơn).
+        // Mỗi model gọi 1 lần để tổng thời gian luôn nằm dưới mốc time out của giao diện.
         String[] models = { geminiModel, "gemini-flash-lite-latest" };
         for (String model : models) {
-            for (int attempt = 1; attempt <= 2; attempt++) {
+            for (int attempt = 1; attempt <= 1; attempt++) {
                 try {
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.APPLICATION_JSON);

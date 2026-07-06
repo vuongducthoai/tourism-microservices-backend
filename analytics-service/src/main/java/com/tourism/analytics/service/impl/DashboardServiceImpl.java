@@ -369,7 +369,7 @@ public class DashboardServiceImpl implements DashboardService {
         List<DashboardStatsDTO.AiEvidenceGroup> groups = List.of(
                 evidenceGroup("revenue", "Doanh thu", List.of(
                         evidenceMetric("revenue.total", "Tổng doanh thu", money(br.getTotalRevenue()), "-", "-",
-                                null, "Cộng doanh thu từ các booking đã thanh toán.", "Dữ liệu đặt tour",
+                                null, "Cộng tiền từ các đơn đã thu tiền: đã thanh toán, đã đi tour chờ đánh giá, và đã đánh giá.", "Dữ liệu đặt tour",
                                 "/api/admin/bookings/stats", bookingQuality, "Số liệu gốc từ hệ thống, không do AI tự tạo."),
                         evidenceMetric("revenue.thisPeriod", "Doanh thu trong giai đoạn đang xem", money(thisMonthRevenue), money(lastMonthRevenue),
                                 money(thisMonthRevenue.subtract(lastMonthRevenue)), revenueGrowth,
@@ -429,7 +429,7 @@ public class DashboardServiceImpl implements DashboardService {
                                 null, "Đếm toàn bộ booking phát sinh trong giai đoạn đang xem.", "Dữ liệu đặt tour",
                                 "/api/admin/bookings/stats", bookingQuality, "Mẫu số để tính các tỷ lệ booking."),
                         evidenceMetric("booking.paid", "Booking đã thanh toán", number(br.getPaidBookings()), "-", "-",
-                                null, "Đếm booking đã thanh toán.", "Dữ liệu đặt tour",
+                                null, "Đếm các đơn đã thu tiền (đã thanh toán, chờ đánh giá, đã đánh giá).", "Dữ liệu đặt tour",
                                 "/api/admin/bookings/stats", bookingQuality, "Dùng để tính tỷ lệ chuyển đổi."),
                         evidenceMetric("booking.cancelled", "Booking đã hủy", number(br.getCancelledBookings()), "-", "-",
                                 null, "Đếm booking đã bị hủy.", "Dữ liệu đặt tour",

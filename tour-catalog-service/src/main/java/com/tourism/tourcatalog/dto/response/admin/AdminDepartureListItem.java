@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class AdminDepartureListItem {
     private Integer departureID;
+    private Integer tourID;
     private String tourName;
     private String tourCode;
     private String tourDuration;

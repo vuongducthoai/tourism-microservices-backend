@@ -40,7 +40,21 @@ public class DepartureController {
     public ResponseEntity<DepartureInfoResponse> getDepartureInfo(@PathVariable Integer departureId) {
         TourDeparture dep = tourDepartureRepository.findById(departureId)
                 .orElseThrow(() -> new RuntimeException("Departure not found: " + departureId));
+        return ResponseEntity.ok(toDepartureInfo(dep));
+    }
 
+    @Operation(summary = "[Internal] Lấy tất cả lịch gắn 1 coupon",
+            description = "Trả về danh sách lịch khởi hành đang gắn couponId — booking-service dùng để hiển thị/sửa coupon nhiều lịch.")
+    @ApiResponse(responseCode = "200", description = "Danh sách lịch")
+    @GetMapping("/by-coupon/{couponId}")
+    @Transactional(readOnly = true)
+    public ResponseEntity<List<DepartureInfoResponse>> getDeparturesByCoupon(@PathVariable Integer couponId) {
+        List<DepartureInfoResponse> list = tourDepartureRepository.findByCouponIdWithTour(couponId)
+                .stream().map(this::toDepartureInfo).toList();
+        return ResponseEntity.ok(list);
+    }
+
+    private DepartureInfoResponse toDepartureInfo(TourDeparture dep) {
         DepartureInfoResponse res = new DepartureInfoResponse();
         res.setDepartureID(dep.getDepartureID());
         if (dep.getDepartureDate() != null) {
@@ -56,7 +70,7 @@ public class DepartureController {
                 res.setImage(tour.getImages().get(0).getImageUrl());
             }
         }
-        return ResponseEntity.ok(res);
+        return res;
     }
 
     @Operation(summary = "[Internal] Thông tin booking form", description = "Trả về pricing, transport, couponId — booking-service gọi qua Feign để hiển thị trang đặt tour")
@@ -140,6 +154,32 @@ public class DepartureController {
             @PathVariable Integer departureId,
             @RequestParam int count) {
         tourDepartureRepository.increaseAvailableSlots(departureId, count);
+        return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[Internal] Gán coupon cho các lịch khởi hành",
+            description = "Gỡ coupon khỏi mọi lịch cũ rồi gắn couponId cho các lịch được chọn. booking-service gọi khi tạo/sửa coupon theo tour.")
+    @ApiResponse(responseCode = "200", description = "Đồng bộ thành công")
+    @PutMapping("/coupon-assignment")
+    @Transactional
+    public ResponseEntity<Void> assignCouponToDepartures(
+            @RequestParam Integer couponId,
+            @RequestBody(required = false) List<Integer> departureIds) {
+        // Luôn gỡ couponId này khỏi mọi lịch trước (tránh sót lịch cũ), rồi gắn lại đúng lịch được chọn
+        tourDepartureRepository.clearCoupon(couponId);
+        if (departureIds != null && !departureIds.isEmpty()) {
+            tourDepartureRepository.setCouponForDepartures(couponId, departureIds);
+        }
+        return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[Internal] Gỡ coupon khỏi mọi lịch",
+            description = "Xóa couponId khỏi tất cả lịch đang gắn. booking-service gọi khi xóa coupon.")
+    @ApiResponse(responseCode = "200", description = "Gỡ thành công")
+    @DeleteMapping("/coupon-assignment/{couponId}")
+    @Transactional
+    public ResponseEntity<Void> clearCouponFromDepartures(@PathVariable Integer couponId) {
+        tourDepartureRepository.clearCoupon(couponId);
         return ResponseEntity.ok().build();
     }
 
