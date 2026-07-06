@@ -1,17 +1,37 @@
-# 🌍 Tourism Microservices
+# 🌍 Future Travel — Tourism Microservices (Backend)
 
-Dự án backend microservices cho hệ thống quản lý du lịch, xây dựng bằng **Spring Boot 3.2**, **Spring Cloud**, **PostgreSQL**, **Redis**, **RabbitMQ** và **Docker**.
+Hệ thống backend cho nền tảng đặt tour du lịch **Future Travel**, xây dựng theo kiến trúc **microservices** với **Spring Boot 3.2**, **Spring Cloud**, **PostgreSQL**, **Redis**, **RabbitMQ**, **Keycloak** và **Docker**. Hệ thống còn tích hợp **trợ lý ảo AI** (Google Gemini + Pinecone vector DB) theo mô hình RAG.
 
 ---
 
 ## 📋 Mục lục
 
+- [Công nghệ sử dụng](#-công-nghệ-sử-dụng)
 - [Yêu cầu](#-yêu-cầu)
 - [Kiến trúc hệ thống](#-kiến-trúc-hệ-thống)
+- [Các service & chức năng](#-các-service--chức-năng)
 - [Chạy toàn bộ hệ thống](#-chạy-toàn-bộ-hệ-thống)
+- [⚠️ Build lại sau khi sửa code (rất quan trọng)](#️-build-lại-sau-khi-sửa-code-rất-quan-trọng)
 - [Chạy từng service riêng lẻ](#-chạy-từng-service-riêng-lẻ)
 - [Cổng dịch vụ](#-cổng-dịch-vụ)
+- [Databases](#-databases)
+- [Biến môi trường](#-biến-môi-trường)
 - [Các lệnh hữu ích](#-các-lệnh-hữu-ích)
+
+---
+
+## 🧰 Công nghệ sử dụng
+
+| Nhóm | Công nghệ |
+|---|---|
+| Ngôn ngữ / Framework | Java 17, Spring Boot 3.2, Spring Cloud |
+| Giao tiếp service | Spring Cloud Gateway, Eureka (Service Discovery), OpenFeign |
+| Dữ liệu | PostgreSQL, Redis (cache), Spring Data JPA / Hibernate |
+| Message queue | RabbitMQ (event-driven, đồng bộ chatbot, thông báo) |
+| Xác thực | Keycloak, JWT |
+| AI / Chatbot | Google Gemini (LLM) + Pinecone (vector database) — RAG |
+| Đóng gói | Docker, Docker Compose |
+| Build | Maven (multi-module) |
 
 ---
 
@@ -24,132 +44,118 @@ Dự án backend microservices cho hệ thống quản lý du lịch, xây dựn
 | Java (JDK) | 17+ |
 | Maven | 3.8+ |
 
-> **Lưu ý:** Nếu chỉ chạy bằng Docker thì **không cần** cài Java và Maven trên máy.
+> **Lưu ý:** Dockerfile của mỗi service **chỉ copy file `.jar`** đã build sẵn (`COPY target/*.jar`), **không** tự biên dịch. Vì vậy **bắt buộc phải cài Java + Maven** để build `.jar` trước khi `docker compose build`. Xem mục [Build lại sau khi sửa code](#️-build-lại-sau-khi-sửa-code-rất-quan-trọng).
 
 ---
 
 ## 🏗️ Kiến trúc hệ thống
 
 ```
-Client
-  └── API Gateway (:8080)
-        ├── IAM Service (:8081)           ← Xác thực & Phân quyền
-        ├── Tour Catalog Service (:8082)  ← Quản lý tour du lịch
-        ├── Booking Service (:8083)       ← Đặt tour
+Client (Web / Mobile)
+  └── API Gateway (:8080/api)
+        ├── IAM Service (:8081)           ← Xác thực, phân quyền, hồ sơ người dùng, xu thưởng
+        ├── Tour Catalog Service (:8082)  ← Tour, lịch khởi hành, giá, địa điểm, đánh giá, chính sách
+        ├── Booking Service (:8083)       ← Đặt tour, coupon giảm giá, hoàn tiền, Green Fund
         ├── Payment Service (:8084)       ← Thanh toán
-        ├── Forum Service (:8085)         ← Diễn đàn
-        ├── Notification Service (:8086)  ← Thông báo
-        └── Analytics Service (:8087)    ← Phân tích dữ liệu
+        ├── Forum Service (:8085)         ← Diễn đàn cộng đồng
+        ├── Notification Service (:8086)  ← Thông báo (email, realtime)
+        └── Analytics Service (:8087)     ← Thống kê doanh thu, phân tích AI, đồng bộ chatbot (RAG)
 
 Infrastructure:
   ├── Service Discovery / Eureka (:8761)
   ├── Config Server (:8888)
   ├── PostgreSQL (:5433)
   ├── Redis (:6379)
-  └── RabbitMQ (:5672 | Management UI :15672)
+  ├── RabbitMQ (:5672 | Management UI :15672)
+  └── Keycloak (xác thực)
 ```
+
+Các service giao tiếp đồng bộ qua **OpenFeign** (ví dụ Booking gọi Tour Catalog để lấy giá/lịch) và bất đồng bộ qua **RabbitMQ** (thông báo, đồng bộ dữ liệu chatbot lên Pinecone).
+
+---
+
+## 🧩 Các service & chức năng
+
+| Service | Chức năng chính |
+|---|---|
+| **IAM** | Đăng ký/đăng nhập, JWT, phân quyền, hồ sơ người dùng, ví xu thưởng |
+| **Tour Catalog** | Quản lý tour, **lịch khởi hành** (giá theo loại khách, vận chuyển, chính sách), địa điểm, đánh giá |
+| **Booking** | Đặt tour, **hệ thống coupon** (theo lịch khởi hành & toàn hệ thống, nhiều-nhiều, tự chọn mã giảm nhiều nhất), hủy/hoàn tiền, Green Fund |
+| **Payment** | Xử lý thanh toán đơn đặt tour |
+| **Forum** | Bài viết, bình luận, tương tác cộng đồng |
+| **Notification** | Gửi email & thông báo realtime (RabbitMQ + WebSocket) |
+| **Analytics** | Dashboard doanh thu, **phân tích bằng AI (Gemini)**, đồng bộ dữ liệu tour/coupon lên **Pinecone** cho trợ lý ảo (RAG) |
 
 ---
 
 ## 🚀 Chạy toàn bộ hệ thống
-
-> Cách này khởi động tất cả infrastructure + services cùng một lúc.
 
 ```bash
 # Bước 1: Clone project (nếu chưa có)
 git clone <repo-url>
 cd Tourism_Microservices
 
-# Bước 2: Build tất cả Docker images và chạy
-docker-compose up -d --build
+# Bước 2: Tạo file .env ở thư mục gốc (xem mục "Biến môi trường")
 
-# Bước 3: Kiểm tra trạng thái
-docker-compose ps
+# Bước 3: Build .jar cho tất cả module rồi khởi động
+mvn -DskipTests package
+docker compose up -d --build
+
+# Bước 4: Kiểm tra trạng thái
+docker compose ps
 ```
 
-**Dừng toàn bộ:**
+**Dừng toàn bộ:** `docker compose down`
+**Dừng và xóa cả dữ liệu (volumes):** `docker compose down -v`
+
+> Muốn **giữ dữ liệu** thì tránh dùng cờ `-v` (nó xóa named volumes của PostgreSQL, Redis, RabbitMQ, Keycloak).
+
+---
+
+## ⚠️ Build lại sau khi sửa code (rất quan trọng)
+
+Dockerfile chỉ `COPY target/*.jar` — **không biên dịch code Java**. Nếu chỉ chạy `docker compose build` sau khi sửa code, nó sẽ đóng gói lại **file `.jar` cũ** → code mới không có tác dụng.
+
+Quy trình đúng gồm **3 bước**: Maven build → Docker build → khởi động lại.
+
 ```bash
-docker-compose down
+# Ví dụ build lại 2 service booking + tour-catalog
+cd /d D:\Tourism_Microservices
+
+# 1) Biên dịch ra .jar mới (-am để build luôn shared-library phụ thuộc)
+mvn -DskipTests -pl booking-service,tour-catalog-service -am package
+
+# 2) Đóng gói Docker image từ .jar mới
+docker compose build booking-service tour-catalog-service
+
+# 3) Khởi động lại container (force-recreate để chắc chắn nạp image mới)
+docker compose up -d --force-recreate --no-deps booking-service tour-catalog-service
 ```
 
-**Dừng và xóa cả dữ liệu (volumes):**
-```bash
-docker-compose down -v
-```
-
-> Muốn giữ dữ liệu thì chỉ dùng `docker-compose down` hoặc `docker-compose up -d --build`; tránh dùng `-v` vì nó xóa named volumes của PostgreSQL, Redis, RabbitMQ và Keycloak.
+> 💡 Có sẵn file `rebuild-services.bat` (Windows) làm tự động cả 3 bước cho các service thường sửa. Nếu máy chưa có Maven, có thể build `.jar` bằng IntelliJ (panel Maven → Lifecycle → `package`, nhớ skip tests) rồi chạy 2 lệnh `docker compose` phía trên.
 
 ---
 
 ## 🔧 Chạy từng service riêng lẻ
 
-> **Quan trọng:** Các services nghiệp vụ phụ thuộc vào infrastructure (PostgreSQL, Redis, RabbitMQ) và service-discovery. Hãy **luôn khởi động infrastructure trước**.
-
-### Bước 1 — Khởi động Infrastructure (bắt buộc)
+> Luôn khởi động **infrastructure** trước, rồi tới **Service Discovery**, cuối cùng mới tới các service nghiệp vụ.
 
 ```bash
-docker-compose up -d postgres redis rabbitmq
-```
+# 1) Infrastructure
+docker compose up -d postgres redis rabbitmq
 
-Chờ các container healthy (khoảng 15-30 giây), kiểm tra:
-```bash
-docker-compose ps
-```
+# 2) Service Discovery (Eureka) — http://localhost:8761
+docker compose up -d service-discovery
 
----
+# 3) Service muốn chạy — chọn 1 trong 2 cách:
 
-### Bước 2 — Khởi động Service Discovery (Eureka)
+#   Cách A — Docker
+docker compose up -d tour-catalog-service
 
-> Tất cả services phải đăng ký vào Eureka để giao tiếp với nhau.
-
-```bash
-docker-compose up -d service-discovery
-```
-
-Truy cập Eureka Dashboard: http://localhost:8761
-
----
-
-### Bước 3 — Chạy service bạn muốn phát triển
-
-Chọn **một trong hai cách** tùy nhu cầu:
-
-#### 🐳 Cách A: Chạy bằng Docker (đơn giản)
-
-```bash
-# Chạy một service cụ thể
-docker-compose up -d <tên-service>
-
-# Ví dụ:
-docker-compose up -d iam-service
-docker-compose up -d tour-catalog-service
-docker-compose up -d booking-service
-```
-
-#### ☕ Cách B: Chạy trực tiếp bằng Maven (cho phát triển / debug)
-
-> Cách này giúp bạn hot-reload và debug dễ hơn, không cần rebuild Docker image mỗi lần sửa code.
-
-```bash
-# Build shared-library trước (chỉ cần làm 1 lần hoặc khi thay đổi shared-library)
-mvn install -pl shared-library -am
-
-# Chạy service cụ thể
-mvn spring-boot:run -pl <tên-module>
-
-# Ví dụ:
-mvn spring-boot:run -pl iam-service
+#   Cách B — Maven (dev/debug, hot-reload)
+mvn install -pl shared-library -am          # build shared-library 1 lần
 mvn spring-boot:run -pl tour-catalog-service
-mvn spring-boot:run -pl booking-service
-mvn spring-boot:run -pl payment-service
-mvn spring-boot:run -pl forum-service
-mvn spring-boot:run -pl notification-service
-mvn spring-boot:run -pl analytics-service
 ```
-
-> **Lưu ý khi dùng Cách B:** Service Discovery phải đang chạy (Docker). Các biến môi trường sẽ dùng giá trị mặc định trong `application.yml` — đảm bảo host/port của PostgreSQL, Redis, RabbitMQ khớp (thường là `localhost`).
-
----
 
 ### Bảng tên service & lệnh nhanh
 
@@ -158,7 +164,7 @@ mvn spring-boot:run -pl analytics-service
 | Service Discovery | `service-discovery` | `service-discovery` | 8761 |
 | Config Server | `config-server` | `config-server` | 8888 |
 | API Gateway | `api-gateway` | `api-gateway` | 8080 |
-| IAM Service | `iam-service` | `iam-service` | 8081 |
+| IAM | `iam-service` | `iam-service` | 8081 |
 | Tour Catalog | `tour-catalog-service` | `tour-catalog-service` | 8082 |
 | Booking | `booking-service` | `booking-service` | 8083 |
 | Payment | `payment-service` | `payment-service` | 8084 |
@@ -181,35 +187,9 @@ mvn spring-boot:run -pl analytics-service
 
 ---
 
-## 🛠️ Các lệnh hữu ích
-
-```bash
-# Xem log của một service
-docker-compose logs -f <tên-service>
-# Ví dụ:
-docker-compose logs -f iam-service
-
-# Restart một service
-docker-compose restart <tên-service>
-
-# Dừng một service
-docker-compose stop <tên-service>
-
-# Build lại image của một service (sau khi sửa code)
-docker-compose up -d --build <tên-service>
-
-# Xem tất cả container đang chạy
-docker-compose ps
-
-# Xem tài nguyên CPU/RAM của containers
-docker stats
-```
-
----
-
 ## 📦 Databases
 
-Khi PostgreSQL khởi động lần đầu, script `docker/postgres/init-databases.sh` sẽ tự động tạo các database sau:
+Khi PostgreSQL khởi động lần đầu, script khởi tạo sẽ tự tạo các database:
 
 | Database | Dùng cho |
 |---|---|
@@ -221,19 +201,56 @@ Khi PostgreSQL khởi động lần đầu, script `docker/postgres/init-databas
 | `notification_db` | Notification Service |
 | `analytics_db` | Analytics Service |
 
+> Có sẵn các file `data_dump.sql` / `schema_dump.sql` để nạp dữ liệu mẫu khi cần.
+
 ---
 
-## 💡 Gợi ý workflow phát triển
+## 🔐 Biến môi trường
+
+Tạo file `.env` ở thư mục gốc (cùng cấp `docker-compose.yml`). Các biến quan trọng cho trợ lý ảo AI:
+
+```env
+# Google Gemini
+GEMINI_API_KEY=<your-key>
+
+# Pinecone (vector DB cho chatbot RAG)
+PINECONE_API_KEY=<your-key>
+PINECONE_ENV=<your-env>
+PINECONE_HOST=<your-index-host>
+```
+
+> ⚠️ Với Spring, biến `${ENV:default}` sẽ dùng **giá trị rỗng** (không phải default) khi env var được set nhưng để trống. Vì vậy phải điền đầy đủ các biến Pinecone, nếu không analytics-service sẽ lỗi đồng bộ chatbot.
+
+---
+
+## 🛠️ Các lệnh hữu ích
+
+```bash
+# Xem log của một service
+docker compose logs -f tour-catalog-service
+
+# Xem 100 dòng log gần nhất (debug lỗi)
+docker compose logs --tail=100 tour-catalog-service
+
+# Restart / dừng một service
+docker compose restart <tên-service>
+docker compose stop <tên-service>
+
+# Xem container đang chạy & tài nguyên
+docker compose ps
+docker stats
+```
+
+---
+
+## 💡 Workflow phát triển đề xuất
 
 ```
 1. Chạy infrastructure bằng Docker:
-   docker-compose up -d postgres redis rabbitmq service-discovery
+   docker compose up -d postgres redis rabbitmq service-discovery
 
-2. Chạy service đang phát triển bằng Maven (để debug):
+2. Chạy service đang phát triển bằng Maven (để debug, hot-reload):
    mvn spring-boot:run -pl <tên-service>
 
-3. Các service còn lại (nếu cần) chạy bằng Docker:
-   docker-compose up -d <service-khác>
+3. Các service còn lại (nếu cần) chạy bằng Docker.
 ```
-
-> Cách này giúp bạn không phải rebuild Docker image mỗi khi sửa code, tăng tốc độ phát triển đáng kể.
