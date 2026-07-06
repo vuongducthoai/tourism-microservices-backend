@@ -39,6 +39,12 @@ public class AdminBookingStatsController {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+    // Các trạng thái được coi là ĐÃ THU TIỀN (tính vào doanh thu):
+    // PAID (đã thanh toán) → sau khi đi tour xong chuyển PENDING_REVIEW (chờ đánh giá) → REVIEWED (đã đánh giá).
+    // Tiền đã thu ở cả 3 trạng thái, nên đều phải tính vào doanh thu.
+    private static final List<BookingStatus> REVENUE_STATUSES = List.of(
+            BookingStatus.PAID, BookingStatus.PENDING_REVIEW, BookingStatus.REVIEWED);
+
     @GetMapping("/stats")
     @Operation(summary = "Lấy thống kê booking & doanh thu cho Dashboard")
     @ApiResponse(responseCode = "200", description = "Booking stats")
@@ -62,7 +68,8 @@ public class AdminBookingStatsController {
 
         // ── Booking counts in selected dashboard range ──
         Long totalBookings = safe(bookingRepository.countActiveBookingsBetween(rangeStartDT, rangeEndDT));
-        Long paidBookings = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PAID, rangeStartDT, rangeEndDT));
+        // "Đã thanh toán" tính cả đơn đã đi tour xong / đã đánh giá (vì đều đã thu tiền).
+        Long paidBookings = safe(bookingRepository.countByBookingStatusesBetween(REVENUE_STATUSES, rangeStartDT, rangeEndDT));
         Long pendingConfirmation = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PENDING_CONFIRMATION, rangeStartDT, rangeEndDT));
         Long pendingPayment = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PENDING_PAYMENT, rangeStartDT, rangeEndDT));
         Long pendingRefund = safe(bookingRepository.countByBookingStatusBetween(BookingStatus.PENDING_REFUND, rangeStartDT, rangeEndDT));
@@ -70,16 +77,16 @@ public class AdminBookingStatsController {
         Long todayBookings = safe(bookingRepository.countByBookingDateBetween(todayStart, tomorrowStart));
         Long thisWeekBookings = safe(bookingRepository.countByBookingDateBetween(weekAgoStart, tomorrowStart));
 
-        // ── Revenue ──
-        BigDecimal totalRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatus(BookingStatus.PAID));
+        // ── Revenue ── (doanh thu = các đơn đã thu tiền: PAID + PENDING_REVIEW + REVIEWED)
+        BigDecimal totalRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatuses(REVENUE_STATUSES));
         BigDecimal pendingConfirmRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.PENDING_CONFIRMATION, rangeStartDT, rangeEndDT));
         BigDecimal pendingPayRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.PENDING_PAYMENT, rangeStartDT, rangeEndDT));
         BigDecimal pendingRefundRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.PENDING_REFUND, rangeStartDT, rangeEndDT));
         BigDecimal cancelledRevenue = safeDecimal(bookingRepository.sumTotalPriceByStatusBetween(BookingStatus.CANCELLED, rangeStartDT, rangeEndDT));
-        BigDecimal todayRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(todayStart, tomorrowStart, BookingStatus.PAID));
-        BigDecimal thisWeekRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(weekAgoStart, tomorrowStart, BookingStatus.PAID));
-        BigDecimal thisMonthRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(rangeStartDT, rangeEndDT, BookingStatus.PAID));
-        BigDecimal lastMonthRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatus(prevStartDT, rangeStartDT, BookingStatus.PAID));
+        BigDecimal todayRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatuses(todayStart, tomorrowStart, REVENUE_STATUSES));
+        BigDecimal thisWeekRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatuses(weekAgoStart, tomorrowStart, REVENUE_STATUSES));
+        BigDecimal thisMonthRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatuses(rangeStartDT, rangeEndDT, REVENUE_STATUSES));
+        BigDecimal lastMonthRevenue = safeDecimal(bookingRepository.sumRevenueByDateAndStatuses(prevStartDT, rangeStartDT, REVENUE_STATUSES));
 
         // ── Daily revenue chart (selected range) ──
         List<DailyRevenueItem> dailyRevenue = buildDailyRevenue(rangeStartDT, rangeEndDT);
@@ -125,7 +132,7 @@ public class AdminBookingStatsController {
     }
 
     private List<DailyRevenueItem> buildDailyRevenue(LocalDateTime start, LocalDateTime end) {
-        List<Object[]> rows = bookingRepository.getDailyRevenueCounts(start, end, BookingStatus.PAID);
+        List<Object[]> rows = bookingRepository.getDailyRevenueCountsByStatuses(start, end, REVENUE_STATUSES);
         Map<String, Object[]> dayMap = rows.stream()
                 .collect(Collectors.toMap(r -> r[0].toString(), r -> r));
 
@@ -154,8 +161,8 @@ public class AdminBookingStatsController {
     }
 
     private List<HotTourRawItem> buildHotTours(LocalDateTime start, LocalDateTime end) {
-        List<Object[]> rows = bookingRepository.getTopDeparturesByBookingCountBetween(
-                BookingStatus.PAID, start, end, PageRequest.of(0, 10));
+        List<Object[]> rows = bookingRepository.getTopDeparturesByBookingCountBetweenStatuses(
+                REVENUE_STATUSES, start, end, PageRequest.of(0, 10));
 
         List<HotTourRawItem> result = new ArrayList<>();
         for (Object[] row : rows) {

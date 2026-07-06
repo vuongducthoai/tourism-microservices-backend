@@ -25,7 +25,8 @@ public class BookingOrderResponse {
     private FlightInfo outboundFlight;
     private FlightInfo inboundFlight;
 
-    private CouponInfo departureCoupon;
+    private CouponInfo departureCoupon;            // mã theo lịch tốt nhất (giảm nhiều nhất) — auto áp
+    private List<CouponInfo> departureCoupons;     // TẤT CẢ mã theo lịch áp dụng cho lịch này
     private List<CouponInfo> globalCoupons;
 
     @Data

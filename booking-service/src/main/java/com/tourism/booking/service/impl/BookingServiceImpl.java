@@ -97,14 +97,16 @@ public class BookingServiceImpl implements BookingService {
 
         LocalDateTime now = LocalDateTime.now();
 
-        // Resolve departure coupon
-        if (info.getCouponId() != null) {
-            try {
-                couponRepository.findActiveCouponById(info.getCouponId(), now)
-                        .ifPresent(c -> res.setDepartureCoupon(toCouponInfo(c)));
-            } catch (Exception e) {
-                log.warn("Could not resolve departure coupon {}: {}", info.getCouponId(), e.getMessage());
+        // Danh sách TẤT CẢ mã theo lịch áp dụng cho lịch này (sắp theo mức giảm giảm dần).
+        // departureCoupon = mã giảm nhiều nhất (để tự áp mặc định); departureCoupons = cả danh sách để user chọn.
+        try {
+            List<Coupon> depCoupons = couponRepository.findActiveDepartureCoupons(departureId, now);
+            if (!depCoupons.isEmpty()) {
+                res.setDepartureCoupons(depCoupons.stream().map(this::toCouponInfo).collect(Collectors.toList()));
+                res.setDepartureCoupon(toCouponInfo(depCoupons.get(0)));
             }
+        } catch (Exception e) {
+            log.warn("Could not resolve departure coupons for departure {}: {}", departureId, e.getMessage());
         }
 
         // Global coupons

@@ -54,6 +54,20 @@ public interface TourDepartureRepository extends JpaRepository<TourDeparture, In
             """)
     int increaseAvailableSlots(@Param("departureId") Integer departureId, @Param("count") int count);
 
+    /** Gỡ coupon khỏi TẤT CẢ lịch đang gắn couponId này (dùng khi cập nhật/xóa coupon). */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE TourDeparture d SET d.couponId = null WHERE d.couponId = :couponId")
+    int clearCoupon(@Param("couponId") Integer couponId);
+
+    /** Gắn couponId cho các lịch được chọn. */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE TourDeparture d SET d.couponId = :couponId WHERE d.departureID IN :ids")
+    int setCouponForDepartures(@Param("couponId") Integer couponId, @Param("ids") List<Integer> ids);
+
+    /** Lấy tất cả lịch đang gắn couponId này (kèm tour) — dùng để hiển thị/sửa coupon. */
+    @Query("SELECT d FROM TourDeparture d JOIN FETCH d.tour WHERE d.couponId = :couponId AND d.isDeleted = false")
+    List<TourDeparture> findByCouponIdWithTour(@Param("couponId") Integer couponId);
+
     Page<TourDeparture> findAllByIsDeletedFalse(Pageable pageable);
 
     Page<TourDeparture> findAllByStatusAndIsDeletedFalse(Boolean status, Pageable pageable);
@@ -63,4 +77,15 @@ public interface TourDepartureRepository extends JpaRepository<TourDeparture, In
 
     Page<TourDeparture> findAllByStatusAndIsDeletedFalseAndDepartureDateBetween(
             Boolean status, LocalDateTime startDate, LocalDateTime endDate, Pageable pageable);
+
+    // ─── Biến thể trả về toàn bộ (không phân trang) để gộp theo tour ───
+    List<TourDeparture> findAllByIsDeletedFalseOrderByDepartureDateAsc();
+
+    List<TourDeparture> findAllByStatusAndIsDeletedFalseOrderByDepartureDateAsc(Boolean status);
+
+    List<TourDeparture> findAllByIsDeletedFalseAndDepartureDateBetweenOrderByDepartureDateAsc(
+            LocalDateTime startDate, LocalDateTime endDate);
+
+    List<TourDeparture> findAllByStatusAndIsDeletedFalseAndDepartureDateBetweenOrderByDepartureDateAsc(
+            Boolean status, LocalDateTime startDate, LocalDateTime endDate);
 }

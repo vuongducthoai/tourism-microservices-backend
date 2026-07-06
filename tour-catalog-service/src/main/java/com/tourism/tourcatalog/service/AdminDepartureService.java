@@ -8,6 +8,7 @@ import java.util.Map;
 
 public interface AdminDepartureService {
     Map<String, Object> getAllDepartures(int page, int size, Boolean status, String startDate, String endDate);
+    Map<String, Object> getGroupedDepartures(int page, int size, Boolean status, String startDate, String endDate);
     AdminDepartureDetailResponse getDepartureById(Integer id);
     AdminDepartureDetailResponse createDeparture(CreateDepartureRequest request);
     AdminDepartureDetailResponse updateDeparture(Integer id, CreateDepartureRequest request);

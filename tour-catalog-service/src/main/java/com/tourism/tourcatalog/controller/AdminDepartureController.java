@@ -28,6 +28,17 @@ public class AdminDepartureController {
         return ResponseEntity.ok(result);
     }
 
+    @GetMapping("/grouped")
+    public ResponseEntity<Map<String, Object>> getGroupedDepartures(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) Boolean status,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        Map<String, Object> result = adminDepartureService.getGroupedDepartures(page, size, status, startDate, endDate);
+        return ResponseEntity.ok(result);
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> getDepartureById(@PathVariable Integer id) {
         AdminDepartureDetailResponse departure = adminDepartureService.getDepartureById(id);

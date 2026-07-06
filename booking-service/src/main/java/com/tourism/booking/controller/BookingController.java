@@ -11,6 +11,9 @@ import com.tourism.booking.dto.response.BookingPaymentDetailResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.dto.response.CouponChatbotSyncResponse;
 import com.tourism.booking.dto.response.CreateBookingResponse;
+import com.tourism.booking.dto.response.DepartureBookedCountResponse;
+import com.tourism.booking.entity.BookingStatus;
+import com.tourism.booking.repository.BookingRepository;
 import com.tourism.booking.repository.CouponRepository;
 import com.tourism.booking.service.BookingService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +40,7 @@ public class BookingController {
 
     private final BookingService    bookingService;
     private final CouponRepository  couponRepository;
+    private final BookingRepository bookingRepository;
 
     @Operation(summary = "[Internal] Chatbot sync coupons", description = "Endpoint noi bo - analytics-service lay coupon active cho Pinecone")
     @ApiResponse(responseCode = "200", description = "Danh sach coupon active")
@@ -125,6 +129,25 @@ public class BookingController {
     @GetMapping("/{bookingID}")
     public ResponseEntity<BookingBriefResponse> getBookingById(@PathVariable Integer bookingID) {
         return ResponseEntity.ok(bookingService.getBookingById(bookingID));
+    }
+
+    @Operation(summary = "[Internal] So khach da dat theo tung lich khoi hanh",
+            description = "Endpoint noi bo - tour-catalog-service goi de hien thi cot 'da dat'. Loai tru booking da huy.")
+    @ApiResponse(responseCode = "200", description = "Danh sach so khach da dat theo departureId")
+    @GetMapping("/booked-counts")
+    public ResponseEntity<List<DepartureBookedCountResponse>> getBookedCounts(
+            @RequestParam List<Integer> departureIds) {
+        if (departureIds == null || departureIds.isEmpty()) {
+            return ResponseEntity.ok(List.of());
+        }
+        List<DepartureBookedCountResponse> result =
+                bookingRepository.sumPassengersByDepartureIds(departureIds, BookingStatus.CANCELLED)
+                        .stream()
+                        .map(row -> new DepartureBookedCountResponse(
+                                (Integer) row[0],
+                                row[1] != null ? ((Number) row[1]).intValue() : 0))
+                        .collect(Collectors.toList());
+        return ResponseEntity.ok(result);
     }
 
     @Operation(summary = "[Internal] Cap nhat trang thai booking", description = "Goi noi bo - tour-catalog-service cap nhat status sau khi nhan review")

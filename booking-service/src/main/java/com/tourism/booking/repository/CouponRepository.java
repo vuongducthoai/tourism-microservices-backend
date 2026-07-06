@@ -54,6 +54,25 @@ public interface CouponRepository extends JpaRepository<Coupon, Integer> {
         @Param("now") LocalDateTime now
     );
 
+    /**
+     * Các coupon DEPARTURE còn hiệu lực áp dụng cho 1 lịch khởi hành, sắp theo mức giảm giảm dần.
+     * Hỗ trợ cả dữ liệu mới (departureIds) lẫn coupon cũ (departureId đơn).
+     * Phần tử đầu tiên = coupon "tốt nhất" (giảm nhiều nhất).
+     */
+    @Query("""
+        SELECT DISTINCT c FROM Coupon c
+        LEFT JOIN c.departureIds d
+        WHERE c.couponType = 'DEPARTURE'
+          AND (d = :departureId OR c.departureId = :departureId)
+          AND (c.isDeleted IS NULL OR c.isDeleted = false)
+          AND (c.startDate IS NULL OR c.startDate <= :now)
+          AND (c.endDate IS NULL OR c.endDate > :now)
+          AND (c.usageLimit IS NULL OR c.usageCount < c.usageLimit)
+        ORDER BY c.discountAmount DESC
+    """)
+    List<Coupon> findActiveDepartureCoupons(@Param("departureId") Integer departureId,
+                                            @Param("now") LocalDateTime now);
+
     @Query("""
         SELECT c FROM Coupon c
         WHERE c.couponType = :globalType

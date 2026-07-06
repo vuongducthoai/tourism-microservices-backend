@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(curl -s http://localhost:8080/actuator)",
-      "Bash(export PGPASSWORD=\"Thoai12309@\")",
-      "Bash(pg_dump -U postgres -h localhost --encoding=UTF8 tourism)"
-    ]
-  }
-}

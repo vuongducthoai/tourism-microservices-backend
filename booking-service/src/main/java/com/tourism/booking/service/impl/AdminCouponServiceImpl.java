@@ -78,6 +78,8 @@ public class AdminCouponServiceImpl implements AdminCouponService {
         Coupon coupon = findActiveById(id);
         coupon.setIsDeleted(true);
         couponRepository.save(coupon);
+        // Không cần gỡ gì bên tour-catalog: coupon bị đánh dấu xóa sẽ tự bị loại
+        // khỏi truy vấn "coupon còn hiệu lực cho lịch".
         chatbotSyncEventPublisher.publish("coupon", coupon.getCouponID(), "DELETE");
     }
 
@@ -121,9 +123,15 @@ public class AdminCouponServiceImpl implements AdminCouponService {
         coupon.setMinOrderValue(request.getMinOrderValue());
         coupon.setCouponType(request.getCouponType());
 
+        // Lưu danh sách lịch mà coupon áp dụng (quan hệ nhiều-nhiều).
+        if (coupon.getDepartureIds() == null) {
+            coupon.setDepartureIds(new java.util.HashSet<>());
+        }
+        coupon.getDepartureIds().clear();
         if (request.getCouponType() == CouponType.DEPARTURE &&
                 request.getDepartureIds() != null && !request.getDepartureIds().isEmpty()) {
-            coupon.setDepartureId(request.getDepartureIds().get(0));
+            coupon.getDepartureIds().addAll(request.getDepartureIds());
+            coupon.setDepartureId(request.getDepartureIds().get(0)); // legacy: giữ lịch đầu tiên
         } else if (request.getCouponType() == CouponType.GLOBAL) {
             coupon.setDepartureId(null);
         }
@@ -138,20 +146,32 @@ public class AdminCouponServiceImpl implements AdminCouponService {
     private AdminCouponResponse mapToResponse(Coupon c) {
         List<AdminCouponResponse.DepartureInfo> departureDetails = Collections.emptyList();
 
-        if (c.getCouponType() == CouponType.DEPARTURE && c.getDepartureId() != null) {
-            try {
-                DepartureInfoResponse dep = tourCatalogClient.getDepartureInfo(c.getDepartureId());
-                if (dep != null) {
-                    departureDetails = List.of(AdminCouponResponse.DepartureInfo.builder()
-                            .departureId(dep.getDepartureID() != null ? dep.getDepartureID() : c.getDepartureId())
-                            .tourCode(dep.getTourCode())
-                            .tourName(dep.getTourName())
-                            .tourId(dep.getTourID())
-                            .departureDate(dep.getDepartureDate())
-                            .build());
+        if (c.getCouponType() == CouponType.DEPARTURE) {
+            // Nguồn chuẩn: danh sách lịch lưu ngay trên coupon (departureIds).
+            java.util.Set<Integer> depIds = c.getDepartureIds();
+            if ((depIds == null || depIds.isEmpty()) && c.getDepartureId() != null) {
+                depIds = java.util.Set.of(c.getDepartureId()); // dự phòng coupon cũ chỉ có departureId đơn
+            }
+            if (depIds != null && !depIds.isEmpty()) {
+                List<AdminCouponResponse.DepartureInfo> list = new java.util.ArrayList<>();
+                for (Integer depId : depIds) {
+                    try {
+                        DepartureInfoResponse dep = tourCatalogClient.getDepartureInfo(depId);
+                        if (dep != null) {
+                            list.add(AdminCouponResponse.DepartureInfo.builder()
+                                    .departureId(dep.getDepartureID() != null ? dep.getDepartureID() : depId)
+                                    .tourCode(dep.getTourCode())
+                                    .tourName(dep.getTourName())
+                                    .tourId(dep.getTourID())
+                                    .departureDate(dep.getDepartureDate())
+                                    .build());
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to fetch departure info depId={} (couponId={}): {}",
+                                depId, c.getCouponID(), e.getMessage());
+                    }
                 }
-            } catch (Exception e) {
-                log.warn("Failed to fetch departure info for departureId={}: {}", c.getDepartureId(), e.getMessage());
+                departureDetails = list;
             }
         }
 
