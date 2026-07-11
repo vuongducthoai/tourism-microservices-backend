@@ -1,0 +1,242 @@
+%% ERD — TOÀN HỆ THỐNG Future Travel (trừ diễn đàn)
+%% Kiến trúc microservices: mỗi service có DB riêng.
+%% Nét liền = khóa ngoại trong CÙNG service.
+%% Nét đứt (..) = tham chiếu sang service khác bằng ID (không có FK thật).
+erDiagram
+    %% ═══════════ IAM SERVICE ═══════════
+    USERS {
+        int userID PK
+        string fullName
+        string email
+        string phone
+        string avatar
+        date dateOfBirth
+        string keycloakId
+    }
+    ROLES {
+        int roleID PK
+        string name
+    }
+    COIN_TRANSACTIONS {
+        long id PK
+        int userId
+        decimal amount
+        string direction
+        string operationKey
+    }
+
+    %% ═══════════ TOUR-CATALOG SERVICE ═══════════
+    LOCATIONS {
+        int locationID PK
+        string name
+        string slug
+        string airportCode
+    }
+    TOURS {
+        int tourID PK
+        string tourCode
+        string tourName
+        string duration
+        int start_location_id FK
+        int end_location_id FK
+    }
+    TOUR_IMAGES {
+        int tourImageID PK
+        int tour_id FK
+        string imageUrl
+    }
+    ITINERARY_DAYS {
+        int itineraryDayID PK
+        int tour_id FK
+        int dayNumber
+        string title
+    }
+    TOUR_STOPS {
+        int stopId PK
+        int tour_id FK
+        int itinerary_day_id FK
+        string name
+        double latitude
+        double longitude
+    }
+    POLICY_TEMPLATES {
+        int policyTemplateID PK
+        int contact_id FK
+        string templateName
+    }
+    BRANCH_CONTACTS {
+        int contactID PK
+        string branchName
+        string phone
+    }
+    TOUR_DEPARTURES {
+        int departureID PK
+        int tour_id FK
+        int policy_template_id FK
+        datetime departureDate
+        int availableSlots
+        int couponId "→ coupons"
+    }
+    DEPARTURE_PRICINGS {
+        int pricingID PK
+        int departure_id FK
+        string passengerType
+        decimal salePrice
+        decimal originalPrice
+    }
+    DEPARTURE_TRANSPORTS {
+        int transportID PK
+        int departure_id FK
+        string vehicleName
+        string startPoint
+        string endPoint
+    }
+    REVIEWS {
+        int reviewID PK
+        int tour_id FK
+        int userId "→ users"
+        int bookingId "→ bookings"
+        int rating
+        string comment
+    }
+    IMAGE_REVIEWS {
+        int imageReviewID PK
+        int review_id FK
+        string imageUrl
+    }
+    FAVORITE_TOURS {
+        int favoriteID PK
+        int tour_id FK
+        int userId "→ users"
+    }
+
+    %% ═══════════ BOOKING SERVICE ═══════════
+    BOOKINGS {
+        int bookingID PK
+        string bookingCode
+        int userId "→ users"
+        int departureId "→ tour_departures"
+        decimal totalPrice
+        string bookingStatus
+        string appliedCouponCodes
+        string idempotencyKey
+    }
+    BOOKING_PASSENGERS {
+        int passengerID PK
+        int booking_id FK
+        string fullName
+        string passengerType
+        decimal basePrice
+    }
+    COUPONS {
+        int couponID PK
+        string couponCode
+        int discountAmount
+        string couponType
+        int departureId "legacy"
+        int usageLimit
+        datetime endDate
+    }
+    COUPON_DEPARTURES {
+        int coupon_id FK
+        int departure_id "→ tour_departures"
+    }
+    REFUND_INFORMATION {
+        int refundID PK
+        int booking_id FK
+        string bank
+        decimal refundAmount
+        string refundStatus
+    }
+    PAYMENTS {
+        int paymentID PK
+        int bookingId "→ bookings"
+        decimal amount
+        string transactionId
+        string paymentStatus
+    }
+    GREEN_FUND_CONTRIBUTIONS {
+        long id PK
+        int userId "→ users"
+        string bookingCode
+        decimal amountVnd
+    }
+    GREEN_FUND_LEDGER {
+        long id PK
+        decimal totalFundRaised
+        long treesPlanted
+    }
+    TREE_PLANTING_BATCHES {
+        long id PK
+        string location
+        date plantedDate
+        int treeCount
+    }
+    CONSULTATION_REQUESTS {
+        int consultationId PK
+        int userId "→ users"
+        int tourId "→ tours"
+        string fullName
+        string phone
+    }
+    COIN_WITHDRAWALS {
+        long id PK
+        int userId "→ users"
+        decimal coinAmount
+        decimal moneyAmount
+        string bank
+    }
+
+    %% ═══════════ NOTIFICATION SERVICE ═══════════
+    NOTIFICATIONS {
+        int notificationID PK
+        int userId "→ users"
+        string title
+        string message
+    }
+    USER_NOTIFICATIONS {
+        int userNotificationID PK
+        int notification_id FK
+        int userId
+    }
+
+    %% ── Khóa ngoại nội bộ IAM ──
+    USERS }o--o{ ROLES : "user_roles"
+    USERS ||--o{ COIN_TRANSACTIONS : "ví xu"
+
+    %% ── Khóa ngoại nội bộ TOUR-CATALOG ──
+    LOCATIONS ||--o{ TOURS : "khởi hành / kết thúc"
+    TOURS ||--o{ TOUR_IMAGES : "có ảnh"
+    TOURS ||--o{ ITINERARY_DAYS : "lịch trình"
+    TOURS ||--o{ TOUR_STOPS : "điểm dừng"
+    ITINERARY_DAYS ||--o{ TOUR_STOPS : "thuộc ngày"
+    TOURS ||--o{ TOUR_DEPARTURES : "lịch khởi hành"
+    POLICY_TEMPLATES ||--o{ TOUR_DEPARTURES : "áp chính sách"
+    BRANCH_CONTACTS ||--o{ POLICY_TEMPLATES : "liên hệ"
+    TOUR_DEPARTURES ||--o{ DEPARTURE_PRICINGS : "bảng giá"
+    TOUR_DEPARTURES ||--o{ DEPARTURE_TRANSPORTS : "vận chuyển"
+    TOURS ||--o{ REVIEWS : "đánh giá"
+    REVIEWS ||--o{ IMAGE_REVIEWS : "ảnh đánh giá"
+    TOURS ||--o{ FAVORITE_TOURS : "yêu thích"
+
+    %% ── Khóa ngoại nội bộ BOOKING ──
+    BOOKINGS ||--o{ BOOKING_PASSENGERS : "hành khách"
+    BOOKINGS ||--o| REFUND_INFORMATION : "hoàn tiền"
+    COUPONS ||--o{ COUPON_DEPARTURES : "áp cho lịch"
+
+    %% ── Khóa ngoại nội bộ NOTIFICATION ──
+    NOTIFICATIONS ||--o{ USER_NOTIFICATIONS : "gửi tới user"
+
+    %% ── Tham chiếu chéo service bằng ID (nét đứt) ──
+    USERS ||..o{ BOOKINGS : "userId"
+    USERS ||..o{ REVIEWS : "userId"
+    USERS ||..o{ FAVORITE_TOURS : "userId"
+    USERS ||..o{ CONSULTATION_REQUESTS : "userId"
+    USERS ||..o{ GREEN_FUND_CONTRIBUTIONS : "userId"
+    USERS ||..o{ COIN_WITHDRAWALS : "userId"
+    USERS ||..o{ NOTIFICATIONS : "userId"
+    TOUR_DEPARTURES ||..o{ BOOKINGS : "departureId"
+    TOUR_DEPARTURES ||..o{ COUPONS : "departureId"
+    TOURS ||..o{ CONSULTATION_REQUESTS : "tourId"
+    BOOKINGS ||..o{ PAYMENTS : "bookingId"
+    BOOKINGS ||..o{ REVIEWS : "bookingId (đã đi mới đánh giá)"

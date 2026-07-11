@@ -65,6 +65,7 @@ public class BookingServiceImpl implements BookingService {
     private final SepayService               sepayService;
     private final ObjectMapper               objectMapper;
     private final com.tourism.booking.service.GreenFundService greenFundService;
+    private final com.tourism.booking.service.RedisSlotReservationService redisSlotService;
 
     private static final BigDecimal COIN_RATE = new BigDecimal("1000"); // 1 coin = 1000 VND
 
@@ -125,30 +126,98 @@ public class BookingServiceImpl implements BookingService {
     @Override
     @Transactional
     public CreateBookingResponse createBooking(CreateBookingRequest request) {
-        // 1. Lấy pricing + departure info từ tour-catalog
-        TourBookingInfoResponse info = tourCatalogClient.getOrderInfo(null, request.getDepartureId());
+        // 0. Idempotency: đơn trùng khóa (double-submit) → trả lại đơn cũ
+        CreateBookingResponse duplicate = findExistingBooking(request.getIdempotencyKey());
+        if (duplicate != null) return duplicate;
 
-        // 2. Đếm số ghế (không tính INFANT)
-        int seatCount = (int) request.getPassengers().stream()
+        // 1. Thông tin tour + số ghế cần giữ
+        TourBookingInfoResponse info = tourCatalogClient.getOrderInfo(null, request.getDepartureId());
+        int seatCount = countSeats(request);
+
+        // 2. Giữ chỗ (cổng Redis + trừ chỗ atomic ở DB) — ném "Không đủ chỗ trống!" nếu hết
+        boolean reservedInRedis = reserveSeats(request, seatCount, info);
+
+        // 3. Tạo đơn — theo mẫu Saga: nếu lỗi sau khi đã trừ chỗ/xu thì bù trừ
+        boolean coinsDeducted = false;
+        BigDecimal deductedCoins = BigDecimal.ZERO;
+        try {
+            Booking booking = new Booking();
+            PricingResult pricing = buildPassengers(info, request, booking);
+            BigDecimal totalBeforeDiscount = pricing.subTotal().add(pricing.surcharge());
+
+            CouponResult coupons = applyCoupons(request, totalBeforeDiscount);
+            CoinResult coins = applyCoins(request);
+            coinsDeducted = coins.deducted();
+            deductedCoins = coins.amount();
+
+            BigDecimal finalTotal = totalBeforeDiscount.subtract(coupons.discount()).subtract(coins.discount());
+            if (finalTotal.compareTo(BigDecimal.ZERO) < 0) finalTotal = BigDecimal.ZERO;
+
+            populateBooking(booking, request, pricing, coupons.discount(), coins.discount(),
+                    finalTotal, coupons.appliedCodes());
+            bookingRepository.save(booking);
+            log.info("Created booking {} for departure {}", booking.getBookingCode(), request.getDepartureId());
+
+            return new CreateBookingResponse(booking.getBookingCode(), booking.getBookingID(),
+                    finalTotal, BookingStatus.PENDING_PAYMENT.name());
+        } catch (RuntimeException ex) {
+            compensate(request, seatCount, reservedInRedis, coinsDeducted, deductedCoins);
+            throw ex; // rollback giao dịch cục bộ + báo lỗi cho FE
+        }
+    }
+
+    // ── Kết quả trung gian (gọn, để trả nhiều giá trị từ các hàm con) ──
+    private record PricingResult(BigDecimal subTotal, BigDecimal surcharge, List<BookingPassenger> passengers) {}
+    private record CouponResult(BigDecimal discount, List<String> appliedCodes) {}
+    private record CoinResult(BigDecimal discount, boolean deducted, BigDecimal amount) {}
+
+    /** Idempotency: trả về đơn đã tạo nếu khóa đã tồn tại, ngược lại null. */
+    private CreateBookingResponse findExistingBooking(String idemKey) {
+        if (idemKey == null || idemKey.isBlank()) return null;
+        return bookingRepository.findByIdempotencyKey(idemKey)
+                .map(b -> {
+                    log.info("Idempotency hit: tra lai booking {} cho key {}", b.getBookingCode(), idemKey);
+                    return toCreateResponse(b);
+                })
+                .orElse(null);
+    }
+
+    /** Đếm số ghế cần giữ (không tính em bé INFANT). */
+    private int countSeats(CreateBookingRequest request) {
+        return (int) request.getPassengers().stream()
                 .filter(p -> !"INFANT".equalsIgnoreCase(p.getType()))
                 .count();
+    }
 
-        // 3. Giảm chỗ trống (atomic — trả 400 nếu hết chỗ)
+    /**
+     * Giữ chỗ: cổng Redis (atomic Lua, từ chối nhanh khi hết chỗ) rồi trừ chỗ atomic ở DB (nguồn sự thật).
+     * Ném "Không đủ chỗ trống!" nếu hết. Trả về true nếu đã giữ chỗ trên Redis (để còn bù trừ khi lỗi).
+     */
+    private boolean reserveSeats(CreateBookingRequest request, int seatCount, TourBookingInfoResponse info) {
+        int dbAvailable = info.getAvailableSlots() != null ? info.getAvailableSlots() : 0;
+        Boolean redisReserve = redisSlotService.tryReserve(request.getDepartureId(), seatCount, dbAvailable);
+        boolean reservedInRedis = Boolean.TRUE.equals(redisReserve);
+        if (Boolean.FALSE.equals(redisReserve)) {
+            throw new RuntimeException("Không đủ chỗ trống!");
+        }
         try {
             ResponseEntity<Void> slotResp = tourCatalogClient.decreaseSlots(request.getDepartureId(), seatCount);
             if (slotResp != null && slotResp.getStatusCode().is4xxClientError()) {
+                if (reservedInRedis) redisSlotService.release(request.getDepartureId(), seatCount);
                 throw new RuntimeException("Không đủ chỗ trống!");
             }
         } catch (FeignException.BadRequest e) {
+            if (reservedInRedis) redisSlotService.release(request.getDepartureId(), seatCount);
             throw new RuntimeException("Không đủ chỗ trống!");
         }
+        return reservedInRedis;
+    }
 
-        // 4. Tính subtotal + surcharge cho từng passenger
+    /** Dựng danh sách hành khách + tính subtotal & phụ phí. */
+    private PricingResult buildPassengers(TourBookingInfoResponse info, CreateBookingRequest request, Booking booking) {
         BigDecimal subTotal = BigDecimal.ZERO;
         BigDecimal surcharge = BigDecimal.ZERO;
-        List<BookingPassenger> passengerEntities = new ArrayList<>();
-
-        Booking booking = new Booking();
+        List<BookingPassenger> passengers = new ArrayList<>();
 
         for (CreateBookingRequest.PassengerRequest p : request.getPassengers()) {
             BigDecimal price = getPriceByType(info, p.getType());
@@ -170,12 +239,13 @@ public class BookingServiceImpl implements BookingService {
             passenger.setRequiresSingleRoom(p.isSingleRoom());
             passenger.setSingleRoomSurcharge(sr);
             passenger.setBooking(booking);
-            passengerEntities.add(passenger);
+            passengers.add(passenger);
         }
+        return new PricingResult(subTotal, surcharge, passengers);
+    }
 
-        BigDecimal totalBeforeDiscount = subTotal.add(surcharge);
-
-        // 5. Apply coupons
+    /** Áp mã giảm giá (kiểm tra tồn tại, đơn tối thiểu; tăng lượt dùng). */
+    private CouponResult applyCoupons(CreateBookingRequest request, BigDecimal totalBeforeDiscount) {
         BigDecimal couponDiscount = BigDecimal.ZERO;
         List<String> appliedCodes = new ArrayList<>();
         if (request.getCouponCode() != null) {
@@ -193,9 +263,14 @@ public class BookingServiceImpl implements BookingService {
                 appliedCodes.add(code);
             }
         }
+        return new CouponResult(couponDiscount, appliedCodes);
+    }
 
-        // 6. Apply points/coins
+    /** Trừ điểm thưởng (xu) qua IAM. Trả về mức giảm + có trừ hay không (để bù trừ khi Saga lỗi). */
+    private CoinResult applyCoins(CreateBookingRequest request) {
         BigDecimal pointDiscount = BigDecimal.ZERO;
+        boolean deducted = false;
+        BigDecimal amount = BigDecimal.ZERO;
         if (request.getUserId() != null && request.getPointsUsed() != null && request.getPointsUsed() > 0) {
             try {
                 UserProfileResponse userProfile = iamClient.getUserProfile(request.getUserId());
@@ -206,20 +281,21 @@ public class BookingServiceImpl implements BookingService {
                 }
                 pointDiscount = pointsToUse.multiply(COIN_RATE);
                 iamClient.deductCoins(request.getUserId(), pointsToUse);
+                deducted = true;
+                amount = pointsToUse;
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
                 log.warn("Failed to deduct coins for user {}: {}", request.getUserId(), e.getMessage());
             }
         }
+        return new CoinResult(pointDiscount, deducted, amount);
+    }
 
-        // 7. Tính finalTotal
-        BigDecimal finalTotal = totalBeforeDiscount.subtract(couponDiscount).subtract(pointDiscount);
-        if (finalTotal.compareTo(BigDecimal.ZERO) < 0) {
-            finalTotal = BigDecimal.ZERO;
-        }
-
-        // 8. Set booking fields
+    /** Gán toàn bộ thông tin cho booking trước khi lưu. */
+    private void populateBooking(Booking booking, CreateBookingRequest request, PricingResult pricing,
+                                 BigDecimal couponDiscount, BigDecimal pointDiscount,
+                                 BigDecimal finalTotal, List<String> appliedCodes) {
         booking.setBookingDate(LocalDateTime.now());
         booking.setBookingStatus(BookingStatus.PENDING_PAYMENT);
         booking.setContactFullName(request.getContactFullName());
@@ -228,26 +304,53 @@ public class BookingServiceImpl implements BookingService {
         booking.setContactAddress(request.getContactAddress());
         booking.setCustomerNote(request.getCustomerNote());
         booking.setTotalPassengers(request.getPassengers().size());
-        booking.setSubtotalPrice(subTotal);
-        booking.setSurcharge(surcharge);
+        booking.setSubtotalPrice(pricing.subTotal());
+        booking.setSurcharge(pricing.surcharge());
         booking.setCouponDiscount(couponDiscount);
         booking.setPaidByCoin(pointDiscount);
         booking.setTotalPrice(finalTotal);
         booking.setUserId(request.getUserId());
         booking.setDepartureId(request.getDepartureId());
+        String idemKey = request.getIdempotencyKey();
+        if (idemKey != null && !idemKey.isBlank()) {
+            booking.setIdempotencyKey(idemKey);
+        }
         if (!appliedCodes.isEmpty()) {
             booking.setAppliedCouponCodes(String.join(",", appliedCodes));
         }
-        booking.setPassengers(passengerEntities);
+        booking.setPassengers(pricing.passengers());
+    }
 
-        bookingRepository.save(booking);
-        log.info("Created booking {} for departure {}", booking.getBookingCode(), request.getDepartureId());
+    /** Bù trừ (Saga): trả lại chỗ và hoàn xu khi tạo đơn thất bại sau khi đã trừ. */
+    private void compensate(CreateBookingRequest request, int seatCount, boolean reservedInRedis,
+                            boolean coinsDeducted, BigDecimal deductedCoins) {
+        try {
+            tourCatalogClient.increaseSlots(request.getDepartureId(), seatCount);
+            if (reservedInRedis) redisSlotService.release(request.getDepartureId(), seatCount);
+            log.warn("Compensation: tra lai {} cho cho departure {} do tao booking that bai",
+                    seatCount, request.getDepartureId());
+        } catch (Exception ce) {
+            log.error("Compensation THAT BAI khi tra cho departure {}: {}",
+                    request.getDepartureId(), ce.getMessage());
+        }
+        if (coinsDeducted && request.getUserId() != null && deductedCoins.signum() > 0) {
+            try {
+                iamClient.addCoins(request.getUserId(), deductedCoins);
+                log.warn("Compensation: hoan {} xu cho user {}", deductedCoins, request.getUserId());
+            } catch (Exception ce) {
+                log.error("Compensation THAT BAI khi hoan xu user {}: {}",
+                        request.getUserId(), ce.getMessage());
+            }
+        }
+    }
 
+    /** Dựng response từ một booking đã tồn tại (dùng cho idempotency). */
+    private CreateBookingResponse toCreateResponse(Booking b) {
         return new CreateBookingResponse(
-                booking.getBookingCode(),
-                booking.getBookingID(),
-                finalTotal,
-                BookingStatus.PENDING_PAYMENT.name());
+                b.getBookingCode(),
+                b.getBookingID(),
+                b.getTotalPrice(),
+                b.getBookingStatus() != null ? b.getBookingStatus().name() : null);
     }
 
     // ── Helper methods ────────────────────────────────────────────────────────
@@ -283,6 +386,8 @@ public class BookingServiceImpl implements BookingService {
         if (seatCount > 0) {
             try {
                 tourCatalogClient.increaseSlots(booking.getDepartureId(), seatCount);
+                // Đồng bộ trả chỗ lại cho cổng Redis để không bị lệch
+                redisSlotService.release(booking.getDepartureId(), seatCount);
                 log.info("Released {} slots for departure {} (booking {})",
                         seatCount, booking.getDepartureId(), booking.getBookingCode());
             } catch (Exception e) {

@@ -28,6 +28,9 @@ public interface BookingRepository extends JpaRepository<Booking, Integer>, Book
 
     java.util.Optional<Booking> findByBookingCode(String bookingCode);
 
+    // Idempotency: tìm đơn đã tạo theo khóa chống trùng
+    Optional<Booking> findByIdempotencyKey(String idempotencyKey);
+
     // ─── Dashboard stats queries ───
 
     @Query("SELECT SUM(b.totalPrice) FROM Booking b WHERE b.bookingStatus = :status AND (b.isDeleted = false OR b.isDeleted IS NULL)")

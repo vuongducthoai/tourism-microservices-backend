@@ -20,6 +20,9 @@ public class CreateBookingRequest {
     private List<String> couponCode;
     private Integer pointsUsed;
 
+    // Khóa chống tạo đơn trùng (double-submit / retry mạng). FE sinh 1 UUID cho mỗi lần đặt.
+    private String idempotencyKey;
+
     @Data
     public static class PassengerRequest {
         private String fullName;

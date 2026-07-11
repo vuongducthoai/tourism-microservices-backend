@@ -11,10 +11,12 @@ import com.tourism.booking.dto.response.BookingPaymentDetailResponse;
 import com.tourism.booking.dto.response.BookingResponse;
 import com.tourism.booking.dto.response.CouponChatbotSyncResponse;
 import com.tourism.booking.dto.response.CreateBookingResponse;
+import com.tourism.booking.dto.response.BookingRequestResult;
 import com.tourism.booking.dto.response.DepartureBookedCountResponse;
 import com.tourism.booking.entity.BookingStatus;
 import com.tourism.booking.repository.BookingRepository;
 import com.tourism.booking.repository.CouponRepository;
+import com.tourism.booking.service.AsyncBookingService;
 import com.tourism.booking.service.BookingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -38,9 +40,10 @@ import java.util.stream.Collectors;
 @Tag(name = "Bookings", description = "Dat tour, huy booking, hoan tien va coupon giam gia")
 public class BookingController {
 
-    private final BookingService    bookingService;
-    private final CouponRepository  couponRepository;
-    private final BookingRepository bookingRepository;
+    private final BookingService      bookingService;
+    private final CouponRepository    couponRepository;
+    private final BookingRepository   bookingRepository;
+    private final AsyncBookingService asyncBookingService;
 
     @Operation(summary = "[Internal] Chatbot sync coupons", description = "Endpoint noi bo - analytics-service lay coupon active cho Pinecone")
     @ApiResponse(responseCode = "200", description = "Danh sach coupon active")
@@ -108,6 +111,23 @@ public class BookingController {
     public ResponseEntity<CreateBookingResponse> createBooking(
             @RequestBody CreateBookingRequest request) {
         return ResponseEntity.ok(bookingService.createBooking(request));
+    }
+
+    @Operation(summary = "Đặt tour bất đồng bộ (Kafka)",
+            description = "Đẩy yêu cầu vào hàng đợi Kafka để san tải; trả về requestId. FE poll /create-status để lấy kết quả.")
+    @ApiResponse(responseCode = "200", description = "Đã tiếp nhận, đang xử lý")
+    @PostMapping("/create-async")
+    public ResponseEntity<BookingRequestResult> createBookingAsync(
+            @RequestBody CreateBookingRequest request) {
+        return ResponseEntity.ok(asyncBookingService.submit(request));
+    }
+
+    @Operation(summary = "Tra trạng thái đặt tour bất đồng bộ", description = "FE poll theo requestId")
+    @GetMapping("/create-status/{requestId}")
+    public ResponseEntity<BookingRequestResult> getBookingStatus(@PathVariable String requestId) {
+        BookingRequestResult r = asyncBookingService.getStatus(requestId);
+        if (r == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(r);
     }
 
     @Operation(summary = "Lay thong tin booking de hien thi trang thanh toan", description = "Tra ve gia, hang khach, tour info cho trang /payment-booking")
