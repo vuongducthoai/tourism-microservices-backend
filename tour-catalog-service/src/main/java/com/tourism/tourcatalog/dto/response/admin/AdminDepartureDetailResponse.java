@@ -13,6 +13,7 @@ import java.util.List;
 @AllArgsConstructor
 public class AdminDepartureDetailResponse {
     private Integer departureID;
+    private Integer tourId;
     private String tourName;
     private String tourCode;
     private String tourDuration;

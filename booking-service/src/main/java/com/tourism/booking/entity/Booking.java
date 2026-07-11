@@ -95,6 +95,10 @@ public class Booking extends BaseEntity {
     @Column(name = "applied_coupon_codes", columnDefinition = "TEXT")
     private String appliedCouponCodes;
 
+    // Khóa idempotency chống tạo đơn trùng (unique). NULL cho đơn cũ / không gửi key.
+    @Column(name = "idempotency_key", unique = true, length = 64)
+    private String idempotencyKey;
+
     @OneToMany(mappedBy = "booking", cascade = CascadeType.ALL)
     private List<BookingPassenger> passengers;
 

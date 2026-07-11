@@ -1,0 +1,125 @@
+%% ERD — Phân hệ DIỄN ĐÀN (forum-service)
+%% Quan hệ nét liền = khóa ngoại trong cùng service.
+%% Quan hệ nét đứt (..) = tham chiếu sang service khác bằng ID (userId → IAM).
+erDiagram
+    USERS_IAM {
+        int userID PK "thuộc IAM service"
+    }
+
+    POST_CATEGORIES {
+        int categoryID PK
+        string name
+        string slug
+        string color
+        int displayOrder
+    }
+    FORUM_POSTS {
+        int postID PK
+        int category_id FK
+        int userId "→ users (IAM)"
+        int tourId "→ tours (tour-catalog)"
+        string title
+        string content
+        string summary
+        string thumbnailUrl
+        string status
+        double moderationScore
+        string moderationLabel
+        datetime publishedAt
+    }
+    POST_COMMENTS {
+        int commentID PK
+        int post_id FK
+        int parent_comment_id FK "trả lời (tự tham chiếu)"
+        int userId
+        string content
+        string moderationLabel
+    }
+    TAGS {
+        int tagID PK
+        string name
+        string slug
+        string color
+    }
+    POST_TAGS {
+        int postTagID PK
+        int post_id FK
+        int tag_id FK
+    }
+    POST_LIKES {
+        int likeId PK
+        int post_id FK
+        int userId
+    }
+    POST_BOOKMARKS {
+        int bookmarkID PK
+        int post_id FK
+        int userId
+    }
+    POST_IMAGES {
+        int postImageID PK
+        int post_id FK
+        string imageUrl
+        int displayOrder
+    }
+    POST_VIEWS {
+        int viewID PK
+        int post_id FK
+        int userId
+        string ipAddress
+    }
+    COMMENT_LIKES {
+        int commentLikeID PK
+        int comment_id FK
+        int userId
+    }
+    FOLLOWERS {
+        int followerID PK
+        int followerUserId "→ users"
+        int followingUserId "→ users"
+    }
+    CONTENT_REPORTS {
+        long id PK
+        int targetId
+        int reporterId
+        string reason
+        string status
+    }
+    MODERATION_AUDIT_LOGS {
+        long id PK
+        int targetId
+        int actorId "null nếu AI"
+        string reason
+    }
+    FORUM_USER_RESTRICTIONS {
+        long id PK
+        int userId
+        datetime bannedUntil
+        string reason
+    }
+    FORUM_COIN_REWARD_LOGS {
+        long id PK
+        int userId
+        decimal amount
+        string reason
+        int refId
+    }
+
+    %% ── Quan hệ nội bộ diễn đàn (khóa ngoại) ──
+    POST_CATEGORIES ||--o{ FORUM_POSTS : "phân loại"
+    FORUM_POSTS ||--o{ POST_COMMENTS : "có bình luận"
+    POST_COMMENTS ||--o{ POST_COMMENTS : "trả lời"
+    FORUM_POSTS ||--o{ POST_TAGS : "gắn"
+    TAGS ||--o{ POST_TAGS : "thuộc"
+    FORUM_POSTS ||--o{ POST_LIKES : "được thích"
+    FORUM_POSTS ||--o{ POST_BOOKMARKS : "được lưu"
+    FORUM_POSTS ||--o{ POST_IMAGES : "có ảnh"
+    FORUM_POSTS ||--o{ POST_VIEWS : "lượt xem"
+    POST_COMMENTS ||--o{ COMMENT_LIKES : "được thích"
+
+    %% ── Tham chiếu chéo service bằng ID (nét đứt) ──
+    USERS_IAM ||..o{ FORUM_POSTS : "userId"
+    USERS_IAM ||..o{ POST_COMMENTS : "userId"
+    USERS_IAM ||..o{ FOLLOWERS : "theo dõi"
+    USERS_IAM ||..o{ FORUM_USER_RESTRICTIONS : "bị hạn chế"
+    USERS_IAM ||..o{ FORUM_COIN_REWARD_LOGS : "nhận thưởng"

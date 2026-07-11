@@ -455,6 +455,7 @@ public class AdminDepartureServiceImpl implements AdminDepartureService {
     private AdminDepartureDetailResponse toDetailResponse(TourDeparture departure) {
         AdminDepartureDetailResponse response = new AdminDepartureDetailResponse();
         response.setDepartureID(departure.getDepartureID());
+        response.setTourId(departure.getTour().getTourID());
         response.setTourName(departure.getTour().getTourName());
         response.setTourCode(departure.getTour().getTourCode());
         response.setTourDuration(departure.getTour().getDuration());
