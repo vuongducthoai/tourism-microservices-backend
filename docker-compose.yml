@@ -128,6 +128,50 @@ services:
     networks:
       - tourism-network
 
+  # --- Kafka UI — giao diện web giám sát Kafka ---
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: tourism-kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=tourism
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+      - DYNAMIC_CONFIG_ENABLED=true
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - tourism-network
+
+  # --- Prometheus — thu thập metrics (demo giám sát booking-service) ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tourism-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - tourism-network
+
+  # --- Grafana — dashboard giám sát ---
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tourism-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - tourism-network
+
   # ======================== CORE SERVICES ========================
 
   # --- Service Discovery (Eureka) ---
@@ -503,6 +547,8 @@ volumes:
   rabbitmq_data:
     driver: local
   keycloak_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:
